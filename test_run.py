@@ -14,6 +14,7 @@
 """
 
 import io
+import msoffcrypto
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
@@ -113,6 +114,29 @@ def build_cj_upload_df(df_smart: pd.DataFrame) -> pd.DataFrame:
 
     # 고객주문번호가 비어 있는 행은 제거 (헤더 잔여 행 등 방지)
     return df_cj[df_cj["고객주문번호"].str.strip() != ""].reset_index(drop=True)
+
+
+def unlock_excel(file_obj, password: str = "") -> io.BytesIO:
+    """
+    엑셀 파일의 암호를 해제하여 BytesIO로 반환합니다.
+
+    - password가 비어 있으면 그대로 BytesIO로 변환 (암호 없는 파일)
+    - password가 있으면 msoffcrypto로 복호화 후 반환
+    - 암호가 틀리면 예외가 발생해 사용자에게 오류 메시지를 표시함
+    """
+    file_obj.seek(0)
+    raw = file_obj.read()
+
+    if not password.strip():
+        return io.BytesIO(raw)
+
+    encrypted_buf = io.BytesIO(raw)
+    office_file = msoffcrypto.OfficeFile(encrypted_buf)
+    office_file.load_key(password=password.strip())
+    decrypted_buf = io.BytesIO()
+    office_file.decrypt(decrypted_buf)
+    decrypted_buf.seek(0)
+    return decrypted_buf
 
 
 def df_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Sheet1") -> bytes:
@@ -229,11 +253,18 @@ with tab1:
         key="tab1_uploader",
         help="네이버 스마트스토어에서 다운로드한 주문 엑셀 파일을 올려주세요.",
     )
+    pw_t1 = st.text_input(
+        "Excel Password (Optional)",
+        type="password",
+        key="tab1_pw",
+        placeholder="엑셀 파일에 비밀번호가 있는 경우에만 입력하세요",
+    )
 
     if uploaded_smart_t1:
         try:
-            # ── 파일 읽기 ──
-            df_smart = read_naver_excel(uploaded_smart_t1)
+            # ── 암호 해제 후 파일 읽기 (비밀번호 없으면 그대로 통과) ──
+            unlocked_t1 = unlock_excel(uploaded_smart_t1, pw_t1)
+            df_smart = read_naver_excel(unlocked_t1)
 
             # ── CJ LOIS 양식으로 변환 ──
             df_cj_upload = build_cj_upload_df(df_smart)
@@ -316,6 +347,12 @@ with tab2:
             key="tab2_smart",
             help="네이버 스마트스토어 주문 엑셀 원본 파일",
         )
+        pw_t2 = st.text_input(
+            "Excel Password (Optional)",
+            type="password",
+            key="tab2_pw",
+            placeholder="비밀번호가 있는 경우에만 입력",
+        )
     with col_right:
         uploaded_cj_t2 = st.file_uploader(
             "② 대한통운 LOIS 결과 파일 (xlsx)",
@@ -340,10 +377,11 @@ with tab2:
                 )
                 st.stop()
 
-            # ── 매칭 실행 (템플릿 유지형) ──
+            # ── 암호 해제 후 매칭 실행 (템플릿 유지형) ──
             with st.spinner("매칭 처리 중..."):
+                unlocked_smart_t2 = unlock_excel(uploaded_smart_t2, pw_t2)
                 result_bytes, matched, unmatched, unmatched_list = match_and_fill_waybill(
-                    smart_file_obj=uploaded_smart_t2,
+                    smart_file_obj=unlocked_smart_t2,
                     cj_df=df_cj,
                 )
 
@@ -368,10 +406,10 @@ with tab2:
             # ── 매칭 결과 미리보기 ──
             st.markdown("**매칭 결과 미리보기** (상품주문번호 / 택배사 / 송장번호)")
 
-            # 미리보기용: pandas로 별도 읽어서 주요 컬럼만 표시
-            header_row_prev = find_header_row(uploaded_smart_t2)
-            uploaded_smart_t2.seek(0)
-            df_preview = pd.read_excel(uploaded_smart_t2, header=header_row_prev, dtype=str).fillna("")
+            # 미리보기용: 이미 해제된 BytesIO 재사용
+            header_row_prev = find_header_row(unlocked_smart_t2)
+            unlocked_smart_t2.seek(0)
+            df_preview = pd.read_excel(unlocked_smart_t2, header=header_row_prev, dtype=str).fillna("")
 
             # CJ lookup 을 다시 만들어 미리보기에 반영
             cj_preview_lookup = dict(
