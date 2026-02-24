@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ===========================================================
-  써밋로직 V2 - 스마트스토어 × 대한통운 LOIS 자동화 도구
+  Summit Logic - 스마트스토어 × 대한통운 LOIS 자동화 도구
 ===========================================================
 [실행]  streamlit run app.py
 [배포]  summitlogic.streamlit.app
@@ -137,7 +137,7 @@ def df_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Sheet1") -> bytes:
 # Streamlit 페이지 설정
 # ===========================================================
 st.set_page_config(
-    page_title="써밋로직 V2",
+    page_title="Summit Logic",
     page_icon="📦",
     layout="centered",
 )
@@ -223,7 +223,7 @@ st.markdown(
 st.markdown(
     """
     <div class="header-area">
-        <h1>📦 써밋로직 V2</h1>
+        <h1>📦 Summit Logic</h1>
         <p>스마트스토어 주문서와 대한통운 LOIS 파일을 업로드하면<br>
         자동으로 접수 파일 생성 및 송장번호 매칭을 처리해 드립니다.</p>
     </div>
@@ -528,7 +528,7 @@ st.markdown("<br><br>", unsafe_allow_html=True)
 st.markdown(
     """
     <div style="text-align:center; color:#bdc1c6; font-size:0.78rem;">
-        써밋로직 V2 &nbsp;|&nbsp; 스마트스토어 × 대한통운 LOIS 자동화
+        Summit Logic &nbsp;|&nbsp; 스마트스토어 × 대한통운 LOIS 자동화
     </div>
     """,
     unsafe_allow_html=True,
