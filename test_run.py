@@ -56,17 +56,19 @@ NAVER_DATA_START_ROW = 3
 
 def find_header_row(file_obj) -> int:
     """
-    '상품주문번호' 텍스트가 포함된 행의 인덱스를 찾아 반환합니다.
+    '상품주문번호' 텍스트와 정확히 일치하는 셀이 있는 행 번호를 반환합니다.
 
-    네이버 스마트스토어 엑셀은 상단에 안내 문구 행이 1개 이상 있어서
-    헤더 위치가 파일마다 달라질 수 있습니다.
-    → 전체를 header=None으로 한 번 읽은 뒤,
-      각 행을 순회하며 '상품주문번호' 텍스트가 있는 행을 헤더로 확정합니다.
+    [핵심 수정] contains() → 정확히 == "상품주문번호" 비교
+    - 네이버 엑셀 Row 0 안내 문구에는 "상품주문번호"가 설명 텍스트로 포함됨
+    - contains() 사용 시 Row 0을 헤더로 잘못 잡는 버그 발생
+    - 정확히 일치(==)하는 셀이 있는 행만 헤더로 인정해 안내 문구 행을 완전히 배제
     """
     file_obj.seek(0)
-    df_raw = pd.read_excel(file_obj, header=None, dtype=str, nrows=10)
+    # nrows 제한 없이 전체 스캔 (파일 구조 변경 대응)
+    df_raw = pd.read_excel(file_obj, header=None, dtype=str)
     for idx, row in df_raw.iterrows():
-        if row.astype(str).str.contains("상품주문번호", na=False).any():
+        # str.strip() == "상품주문번호" : 공백 제거 후 정확히 일치하는 셀이 있는 행만 선택
+        if (row.astype(str).str.strip() == "상품주문번호").any():
             return int(idx)
     raise ValueError(
         "'상품주문번호' 컬럼을 찾을 수 없습니다.\n"
@@ -78,15 +80,25 @@ def read_naver_excel(file_obj) -> pd.DataFrame:
     """
     네이버 스마트스토어 주문 엑셀을 데이터프레임으로 읽습니다.
 
-    - '상품주문번호'가 있는 행을 동적으로 탐색해 헤더로 설정
-      (안내 문구 행 수가 달라도 항상 정확한 헤더를 잡음)
-    - dtype=str : 주문번호/전화번호 등 숫자로 오인될 수 있는 값을 문자열 유지
-    - fillna("") : 빈칸을 NaN 대신 빈 문자열로 변환
+    1. find_header_row()로 '상품주문번호' 열이 정확히 있는 행을 헤더로 설정
+    2. [데이터 정제] 아래 두 가지 불량 행을 완전히 제거:
+       - 상품주문번호 열이 빈 행 (빈 줄, 합계 행 등)
+       - 상품주문번호 열이 '상품주문번호' 텍스트인 행 (중복 헤더 잔재)
+    3. dtype=str : 주문번호/전화번호 등 숫자로 오인될 수 있는 값을 문자열 유지
     """
     header_row = find_header_row(file_obj)
     file_obj.seek(0)
     df = pd.read_excel(file_obj, header=header_row, dtype=str)
-    return df.fillna("")
+    df = df.fillna("")
+
+    # 첫 번째 컬럼(상품주문번호)을 기준으로 불량 행 제거
+    order_col = df.columns[0]
+    df = df[
+        (df[order_col].str.strip() != "") &          # 빈 행 제거
+        (df[order_col].str.strip() != "상품주문번호")  # 중복 헤더 잔재 제거
+    ].reset_index(drop=True)
+
+    return df
 
 
 def build_cj_upload_df(df_smart: pd.DataFrame) -> pd.DataFrame:
