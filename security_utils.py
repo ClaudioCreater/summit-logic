@@ -22,31 +22,41 @@ import msoffcrypto
 # .streamlit/secrets.toml 파일 생성 후 동일하게 작성 (Git 추적 제외됨)
 
 
-def _load_access_key() -> str:
-    """Streamlit Secrets → 환경변수 → 로컬 개발 fallback 순으로 Access Key 로드."""
+def get_access_key() -> str:
+    """
+    Streamlit Secrets → 환경변수 → 로컬 개발 fallback 순으로 Access Key를 반환합니다.
+
+    [중요] 모듈 레벨 상수가 아닌 함수로 구현합니다.
+    모듈 상수 방식은 Streamlit이 완전히 재시작되지 않으면 이전 값이 캐시되어
+    Secrets 변경이 반영되지 않는 버그가 있기 때문입니다.
+
+    app.py에서 매번 get_access_key()를 호출하므로 항상 최신 값이 사용됩니다.
+    """
+    import os
 
     # 1순위: Streamlit Secrets (배포 환경)
     try:
         import streamlit as st
-        key = st.secrets.get("ACCESS_KEY", None)
-        if key:
-            return str(key)
+        # st.secrets["KEY"] 방식으로 직접 접근 (KeyError는 아래에서 처리)
+        if "ACCESS_KEY" in st.secrets:
+            key = str(st.secrets["ACCESS_KEY"]).strip()
+            if key:
+                return key
     except Exception:
         pass
 
     # 2순위: OS 환경변수 (Docker / CI 등)
-    import os
-    key = os.environ.get("SUMMIT_ACCESS_KEY", "")
+    key = os.environ.get("SUMMIT_ACCESS_KEY", "").strip()
     if key:
         return key
 
     # 3순위: 로컬 개발 전용 기본값
-    # ※ 이 값은 배포 환경에서는 절대 사용되지 않습니다.
-    #    Streamlit Cloud Secrets에 ACCESS_KEY가 등록되어 있으면 이 값은 무시됩니다.
     return "summit2026"
 
 
-ACCESS_KEY: str = _load_access_key()
+# 하위 호환성 유지: 기존에 ACCESS_KEY를 import하는 코드가 있으면 작동하도록
+# 단, 실제 검증은 반드시 get_access_key()를 직접 호출해야 Secrets 변경이 반영됨
+ACCESS_KEY: str = "summit2026"  # app.py에서 get_access_key()로 교체됨
 
 
 def unlock_excel(file_obj, password: str = "") -> io.BytesIO:

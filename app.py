@@ -16,7 +16,7 @@ Streamlit 메인 진입점. UI 구성 및 탭 레이아웃만 담당합니다.
 import pandas as pd
 import streamlit as st
 
-from security_utils import ACCESS_KEY, unlock_excel
+from security_utils import get_access_key, unlock_excel
 from logistics_engine import (
     NAVER,
     find_header_row,
@@ -134,7 +134,8 @@ with st.sidebar:
         placeholder="접속 키를 입력하세요",
         key="access_key",
     )
-    if access_input == ACCESS_KEY:
+    _current_key = get_access_key()
+    if access_input == _current_key:
         st.success("✅ 인증 완료")
     elif access_input:
         st.error("❌ 잘못된 접속 키")
@@ -186,7 +187,7 @@ st.markdown(
 # ===========================================================
 # Access Key 게이트 — 인증 실패 시 이하 모든 기능 차단
 # ===========================================================
-if access_input != ACCESS_KEY:
+if access_input != get_access_key():
     st.markdown(
         """
         <div class="lock-overlay">
