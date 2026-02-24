@@ -1,0 +1,16 @@
+[server]
+# 업로드 가능한 최대 파일 크기 (MB)
+# 네이버 주문서 1,000건 기준 약 2-3MB → 넉넉히 50MB 허용
+maxUploadSize = 50
+
+[browser]
+# 서버 접속 시 자동으로 브라우저를 열지 않음 (클라우드 배포용)
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#1a73e8"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f8f9fa"
+textColor = "#202124"
+font = "sans serif"

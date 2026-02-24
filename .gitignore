@@ -1,3 +1,6 @@
+# Streamlit Secrets (실제 비밀번호 — 절대 GitHub에 올리면 안 됨)
+.streamlit/secrets.toml
+
 # 더미 및 테스트용 엑셀 파일
 dummy_smart.xlsx
 dummy_cj.xlsx
