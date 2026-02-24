@@ -25,6 +25,8 @@ from logistics_engine import (
     build_cj_upload_df,
     match_and_fill_waybill,
     df_to_excel_bytes,
+    map_cj_columns,
+    diagnose_smart_file,
 )
 
 
@@ -227,7 +229,32 @@ with tab1:
     if uploaded_t1:
         try:
             unlocked_t1 = unlock_excel(uploaded_t1, pw_t1)
+
+            # ── [V3.1] 헤더 위치 탐색 (진단용) ──
+            detected_header_row = find_header_row(unlocked_t1)
             df_smart = read_naver_excel(unlocked_t1)
+
+            # ── [V3.1] 진단 모드: 인식된 헤더 정보 표시 ──
+            diag = diagnose_smart_file(df_smart, detected_header_row)
+            with st.expander("🔍 파일 인식 진단 결과 (클릭하여 확인)", expanded=False):
+                st.markdown(
+                    f"**헤더 행**: Row {diag['header_row'] + 1} &nbsp;|&nbsp; "
+                    f"**전체 컬럼**: {diag['total_cols']}개 &nbsp;|&nbsp; "
+                    f"**주문 데이터**: {diag['total_rows']}행",
+                )
+                rows_diag = []
+                for logical, (idx, actual, ok) in diag["key_cols"].items():
+                    rows_diag.append({
+                        "필드": logical,
+                        "열 번호": f"{idx}번열",
+                        "인식된 컬럼명": actual,
+                        "상태": "✅ 정상" if ok else "⚠️ 확인 필요",
+                    })
+                st.dataframe(
+                    pd.DataFrame(rows_diag),
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
             df_cj_upload, original_count = build_cj_upload_df(df_smart)
             total   = len(df_cj_upload)
@@ -377,6 +404,61 @@ with tab2:
         )
 
     st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── [V3.1] 파일 업로드 즉시 진단 (버튼 클릭 전에도 표시) ──
+    if uploaded_smart_t2 or uploaded_cj_t2:
+        with st.expander("🔍 파일 인식 진단 결과 (클릭하여 확인)", expanded=False):
+            diag_col1, diag_col2 = st.columns(2)
+
+            with diag_col1:
+                st.markdown("**① 스마트스토어 파일**")
+                if uploaded_smart_t2:
+                    try:
+                        _buf_diag = unlock_excel(uploaded_smart_t2, pw_t2)
+                        _hdr = find_header_row(_buf_diag)
+                        _buf_diag.seek(0)
+                        import pandas as _pd
+                        _df_diag = _pd.read_excel(_buf_diag, header=_hdr, dtype=str, nrows=0)
+                        st.markdown(
+                            f"헤더 위치: **Row {_hdr + 1}** &nbsp;|&nbsp; "
+                            f"컬럼 수: **{len(_df_diag.columns)}개**"
+                        )
+                        _key_checks = [
+                            ("상품주문번호", NAVER["상품주문번호"]),
+                            ("수취인명",     NAVER["수취인명"]),
+                            ("택배사",       NAVER["택배사"]),
+                            ("송장번호",     NAVER["송장번호"]),
+                        ]
+                        for logical, idx in _key_checks:
+                            if idx < len(_df_diag.columns):
+                                actual = str(_df_diag.columns[idx])
+                                icon = "✅" if logical in actual or actual in logical else "⚠️"
+                                st.caption(f"{icon} {idx}번열 → `{actual}`")
+                            else:
+                                st.caption(f"❌ {idx}번열 없음")
+                    except Exception as _e:
+                        st.warning(f"진단 중 오류: {_e}")
+                else:
+                    st.caption("파일을 업로드하면 진단 결과가 표시됩니다.")
+
+            with diag_col2:
+                st.markdown("**② CJ LOIS 파일**")
+                if uploaded_cj_t2:
+                    try:
+                        _df_cj_diag = pd.read_excel(uploaded_cj_t2, dtype=str, nrows=0)
+                        uploaded_cj_t2.seek(0)
+                        st.markdown(f"컬럼 수: **{len(_df_cj_diag.columns)}개**")
+                        try:
+                            _cj_map = map_cj_columns(_df_cj_diag)
+                            st.caption(f"✅ 주문번호 컬럼 → `{_cj_map['order']}`")
+                            st.caption(f"✅ 운송장 컬럼  → `{_cj_map['waybill']}`")
+                        except ValueError as _ve:
+                            st.warning(str(_ve).split("\n")[0])
+                    except Exception as _e:
+                        st.warning(f"진단 중 오류: {_e}")
+                else:
+                    st.caption("파일을 업로드하면 진단 결과가 표시됩니다.")
+
     run_btn = st.button("🔍 송장번호 자동 매칭 실행", use_container_width=True, key="run_btn")
     st.markdown("<hr class='divider'>", unsafe_allow_html=True)
 
@@ -395,15 +477,9 @@ with tab2:
                     unlocked_smart_t2 = unlock_excel(uploaded_smart_t2, pw_t2)
 
                     df_cj = pd.read_excel(uploaded_cj_t2, dtype=str).fillna("")
-                    missing_cols = [
-                        c for c in ["고객주문번호", "운송장번호"]
-                        if c not in df_cj.columns
-                    ]
-                    if missing_cols:
-                        raise ValueError(
-                            f"대한통운 파일에 필수 컬럼이 없습니다: {missing_cols}\n"
-                            f"실제 컬럼: {list(df_cj.columns)}"
-                        )
+
+                    # [V3.1] 지능형 컬럼 탐색으로 유효성 검사 (정확한 오류 메시지 포함)
+                    cj_detected = map_cj_columns(df_cj)  # ValueError 시 즉시 중단
 
                     result_bytes, matched, unmatched, unmatched_list = match_and_fill_waybill(
                         smart_file_obj=unlocked_smart_t2,
@@ -411,6 +487,15 @@ with tab2:
                     )
 
                 total = matched + unmatched
+
+                # ── [V3.1] 인식된 컬럼 정보 표시 ──
+                st.markdown(
+                    f"<small style='color:#5f6368;'>✅ 주문번호 컬럼 → "
+                    f"<code>{cj_detected['order']}</code> &nbsp;|&nbsp; "
+                    f"✅ 운송장 컬럼 → "
+                    f"<code>{cj_detected['waybill']}</code></small>",
+                    unsafe_allow_html=True,
+                )
 
                 # ── 결과 통계 ──
                 st.markdown("### 📊 매칭 결과 요약")

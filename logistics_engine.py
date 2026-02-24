@@ -38,6 +38,123 @@ NAVER: dict[str, int] = {
 
 
 # ===========================================================
+# [V3.1] 지능형 컬럼 탐색
+# ===========================================================
+
+# ── CJ LOIS 파일 컬럼 탐색 키워드 (우선순위 순, 한·영 혼용 지원) ──
+_CJ_ORDER_KEYWORDS: list[str] = [
+    "고객주문번호", "주문번호", "고객주문", "주문",
+    "order number", "order no", "orderno", "order",   # 영문 양식 대응
+]
+_CJ_WAYBILL_KEYWORDS: list[str] = [
+    "운송장번호", "송장번호", "운송장", "invoice", "송장", "운송",
+    "waybill", "tracking number", "tracking no", "tracking",  # 영문 양식 대응
+]
+
+# ── 스마트스토어 파일에서 '상품주문번호' 컬럼 탐색 키워드 ──
+_SMART_ORDER_KEYWORDS: list[str] = [
+    "상품주문번호", "주문번호", "상품주문",
+]
+
+
+def find_column(df: pd.DataFrame, keywords: list, field_name: str) -> str:
+    """
+    DataFrame 컬럼 목록에서 키워드와 일치하거나 포함하는 컬럼명을 탐색합니다.
+
+    탐색 순서:
+    1. keywords 순서대로 정확히 일치하는 컬럼 탐색 (strip 후 비교)
+    2. 정확 일치가 없으면 keywords 순서대로 포함(contains) 탐색 (대소문자 무시)
+
+    Args:
+        df         : 검색 대상 DataFrame
+        keywords   : 우선순위 순 탐색 키워드 리스트
+        field_name : 오류 메시지에 표시할 필드 이름
+
+    Returns:
+        발견된 실제 컬럼명 (str)
+
+    Raises:
+        ValueError: 매칭되는 컬럼이 없을 경우 구체적인 오류 메시지 포함.
+    """
+    cols = [str(c) for c in df.columns]
+
+    # 1단계: 정확히 일치
+    for kw in keywords:
+        for col in cols:
+            if col.strip() == kw:
+                return col
+
+    # 2단계: 포함 일치 (대소문자 무시)
+    for kw in keywords:
+        for col in cols:
+            if kw.lower() in col.strip().lower():
+                return col
+
+    raise ValueError(
+        f"파일 양식이 잘못되었습니다. '{field_name}' 컬럼을 찾을 수 없습니다.\n"
+        f"탐색 키워드: {keywords}\n"
+        f"실제 컬럼 목록: {cols}"
+    )
+
+
+def map_cj_columns(df: pd.DataFrame) -> dict[str, str]:
+    """
+    CJ LOIS 결과 파일에서 주문번호·운송장번호 컬럼을 지능적으로 탐색합니다.
+
+    '운송장번호'뿐만 아니라 '송장번호', '운송장', 'invoice' 등
+    유사 명칭도 자동으로 인식합니다.
+
+    Returns:
+        dict: {"order": 실제_주문번호_컬럼명, "waybill": 실제_운송장번호_컬럼명}
+
+    Raises:
+        ValueError: 필수 컬럼을 찾지 못한 경우 구체적인 오류 메시지 포함.
+    """
+    order_col   = find_column(df, _CJ_ORDER_KEYWORDS,   "고객주문번호 (주문 키)")
+    waybill_col = find_column(df, _CJ_WAYBILL_KEYWORDS, "운송장번호 (송장 번호)")
+    return {"order": order_col, "waybill": waybill_col}
+
+
+def diagnose_smart_file(df_smart: pd.DataFrame, header_row: int) -> dict:
+    """
+    스마트스토어 DataFrame의 컬럼 인식 결과를 진단 정보로 반환합니다.
+
+    Returns:
+        dict: {
+            "header_row"   : 헤더 행 번호 (0-indexed),
+            "total_cols"   : 전체 컬럼 수,
+            "total_rows"   : 데이터 행 수,
+            "key_cols"     : {논리명: (인덱스, 실제컬럼명, 인식여부)} 딕셔너리,
+        }
+    """
+    key_map = {
+        "상품주문번호":  NAVER["상품주문번호"],
+        "수취인명":     NAVER["수취인명"],
+        "수취인연락처1": NAVER["수취인연락처1"],
+        "합배송지":     NAVER["합배송지"],
+        "상품명":       NAVER["상품명"],
+        "수량":         NAVER["수량"],
+        "택배사":       NAVER["택배사"],
+        "송장번호":     NAVER["송장번호"],
+    }
+    key_cols = {}
+    for logical, idx in key_map.items():
+        if idx < len(df_smart.columns):
+            actual = str(df_smart.columns[idx])
+            ok = logical in actual or actual in logical
+            key_cols[logical] = (idx, actual, ok)
+        else:
+            key_cols[logical] = (idx, "컬럼 없음", False)
+
+    return {
+        "header_row": header_row,
+        "total_cols": len(df_smart.columns),
+        "total_rows": len(df_smart),
+        "key_cols":   key_cols,
+    }
+
+
+# ===========================================================
 # 헤더 탐색 & 엑셀 읽기
 # ===========================================================
 
@@ -109,6 +226,24 @@ def build_cj_upload_df(df_smart: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     Returns:
         tuple: (변환된 DataFrame, 원본 주문 건수)
     """
+    # ── [V3.1] 데이터 유효성 검사 ──
+    # 스마트스토어 파일의 컬럼 수가 필요한 최소 인덱스보다 적으면 즉시 오류 안내
+    required_max_idx = max(NAVER.values())
+    if df_smart.shape[1] <= required_max_idx:
+        raise ValueError(
+            f"파일 양식이 잘못되었습니다. '상품주문번호' 컬럼을 찾을 수 없습니다.\n"
+            f"예상 컬럼 수: {required_max_idx + 1}개 이상 / "
+            f"실제 컬럼 수: {df_smart.shape[1]}개\n"
+            "네이버 스마트스토어에서 다운로드한 원본 엑셀 파일인지 확인해 주세요."
+        )
+
+    # '상품주문번호' 컬럼이 이름으로도 존재하는지 추가 확인
+    try:
+        find_column(df_smart, _SMART_ORDER_KEYWORDS, "상품주문번호")
+    except ValueError:
+        # 이름으로 못 찾아도 positional 접근이 있으므로 경고만 (raise 안 함)
+        pass
+
     # ── 1) 컬럼 추출 + 정제 ──
     df = pd.DataFrame({
         "고객주문번호": df_smart.iloc[:, NAVER["상품주문번호"]].str.strip(),
@@ -181,11 +316,16 @@ def match_and_fill_waybill(
     Returns:
         tuple: (수정된 엑셀 바이트, 매칭 성공 건수, 미발급 건수, 미발급 주문번호 목록)
     """
-    # ── CJ 룩업 ──
+    # ── [V3.1] 지능형 컬럼 탐색으로 CJ 룩업 생성 ──
+    # '운송장번호', '송장번호', 'invoice' 등 유사 명칭 컬럼 자동 인식
+    cj_col_map  = map_cj_columns(cj_df)          # 데이터 유효성 검사 + 컬럼 탐색
+    order_col   = cj_col_map["order"]
+    waybill_col = cj_col_map["waybill"]
+
     cj_lookup: dict[str, str] = {}
     for _, row in cj_df.iterrows():
-        key = str(row.get("고객주문번호", "")).strip()
-        val = str(row.get("운송장번호", "")).strip()
+        key = str(row.get(order_col, "")).strip()
+        val = str(row.get(waybill_col, "")).strip()
         if key and key not in cj_lookup:
             cj_lookup[key] = val
 
