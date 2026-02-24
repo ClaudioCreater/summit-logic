@@ -141,8 +141,33 @@ with st.sidebar:
         st.error("❌ 잘못된 접속 키")
     else:
         st.info("키를 입력하면 기능이 활성화됩니다")
+
     st.markdown("---")
-    st.caption("Summit Logic V3")
+
+    # ── 개인정보 처리 방침 (사이드바) ──
+    with st.expander("🔒 개인정보 처리 방침"):
+        st.markdown(
+            """
+            <div style="font-size:0.82rem; color:#3c4043; line-height:1.8;">
+            <b>Summit Logic 데이터 처리 원칙</b><br><br>
+            📋 <b>서버 무저장 원칙</b><br>
+            &nbsp;&nbsp;업로드된 파일은 어떠한 서버에도<br>
+            &nbsp;&nbsp;저장·기록되지 않습니다.<br><br>
+            ⚡ <b>즉시 파기</b><br>
+            &nbsp;&nbsp;변환·매칭 완료 즉시 메모리에서<br>
+            &nbsp;&nbsp;완전히 삭제됩니다.<br><br>
+            🔐 <b>암호화 전송</b><br>
+            &nbsp;&nbsp;모든 통신은 HTTPS로 암호화됩니다.<br><br>
+            👤 <b>제3자 미제공</b><br>
+            &nbsp;&nbsp;개인정보를 외부에 제공하거나<br>
+            &nbsp;&nbsp;판매하지 않습니다.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("---")
+    st.caption("Summit Logic V3.1")
 
 
 # ── 앱 헤더 ──
@@ -606,13 +631,42 @@ with tab2:
 
 
 # ===========================================================
-# 하단 푸터
+# 하단 푸터 + 개인정보 처리 방침 배너
 # ===========================================================
 st.markdown("<br><br>", unsafe_allow_html=True)
+
+# 개인정보 처리 방침 배너 (푸터 상단)
+st.markdown(
+    """
+    <div style="
+        background: #f0f4ff;
+        border: 1px solid #d2e3fc;
+        border-radius: 10px;
+        padding: 14px 20px;
+        margin-bottom: 16px;
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+    ">
+        <span style="font-size:1.3rem;">🔒</span>
+        <div style="font-size:0.82rem; color:#3c4043; line-height:1.8;">
+            <b style="color:#1a56a4;">개인정보 보호 안내</b><br>
+            본 서비스는 사용자가 업로드한 엑셀 파일을 <b>서버에 저장하지 않습니다.</b>
+            모든 데이터는 변환·매칭 처리가 완료되는 즉시 메모리에서 완전히 파기되며,
+            개인정보(수취인명, 연락처, 주소 등)를 외부에 제공하거나 분석에 활용하지 않습니다.
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# 푸터
 st.markdown(
     """
     <div style="text-align:center; color:#bdc1c6; font-size:0.78rem;">
-        Summit Logic V3 &nbsp;|&nbsp; 스마트스토어 × 대한통운 LOIS 자동화
+        Summit Logic V3.1 &nbsp;|&nbsp; 스마트스토어 × 대한통운 LOIS 자동화
+        &nbsp;&nbsp;·&nbsp;&nbsp;
+        업로드된 파일은 서버에 저장되지 않으며 처리 즉시 메모리에서 삭제됩니다.
     </div>
     """,
     unsafe_allow_html=True,

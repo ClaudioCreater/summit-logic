@@ -57,13 +57,31 @@ _SMART_ORDER_KEYWORDS: list[str] = [
 ]
 
 
+import re as _re
+
+
+def _normalize(text: str) -> str:
+    """
+    컬럼명 정규화: 소문자 변환 + 공백·밑줄·하이픈 제거.
+
+    '운송장 번호', '운송장_번호', 'Tracking-Number' 등 표기 변형을
+    동일하게 처리하기 위해 사용합니다.
+
+    Example:
+        _normalize("운송장 번호")  → "운송장번호"
+        _normalize("Invoice_No.") → "invoiceno."
+    """
+    return _re.sub(r"[\s_\-]", "", str(text)).lower()
+
+
 def find_column(df: pd.DataFrame, keywords: list, field_name: str) -> str:
     """
     DataFrame 컬럼 목록에서 키워드와 일치하거나 포함하는 컬럼명을 탐색합니다.
 
-    탐색 순서:
-    1. keywords 순서대로 정확히 일치하는 컬럼 탐색 (strip 후 비교)
-    2. 정확 일치가 없으면 keywords 순서대로 포함(contains) 탐색 (대소문자 무시)
+    탐색 3단계 (앞 단계 성공 시 즉시 반환):
+    1. strip 후 정확히 일치
+    2. 정규화(_normalize) 후 정확히 일치  ← 공백·밑줄 차이 무시
+    3. 정규화 후 포함(contains) 일치       ← 대소문자·구분자 모두 무시
 
     Args:
         df         : 검색 대상 DataFrame
@@ -74,24 +92,37 @@ def find_column(df: pd.DataFrame, keywords: list, field_name: str) -> str:
         발견된 실제 컬럼명 (str)
 
     Raises:
-        ValueError: 매칭되는 컬럼이 없을 경우 구체적인 오류 메시지 포함.
+        ValueError: 3단계 모두 실패 시 구체적인 안내 메시지 포함.
+
+    Examples:
+        '운송장 번호' → 2단계 정규화 일치
+        'Invoice No.' → 3단계 포함 일치
+        '고객 주문 번호' → 2단계 정규화 일치
     """
     cols = [str(c) for c in df.columns]
 
-    # 1단계: 정확히 일치
+    # 1단계: strip 후 정확히 일치
     for kw in keywords:
         for col in cols:
             if col.strip() == kw:
                 return col
 
-    # 2단계: 포함 일치 (대소문자 무시)
+    # 2단계: 정규화 후 정확히 일치 (공백·밑줄·하이픈 무시)
     for kw in keywords:
+        norm_kw = _normalize(kw)
         for col in cols:
-            if kw.lower() in col.strip().lower():
+            if _normalize(col) == norm_kw:
+                return col
+
+    # 3단계: 정규화 후 포함 일치 (대소문자·구분자 모두 무시)
+    for kw in keywords:
+        norm_kw = _normalize(kw)
+        for col in cols:
+            if norm_kw in _normalize(col):
                 return col
 
     raise ValueError(
-        f"파일 양식이 잘못되었습니다. '{field_name}' 컬럼을 찾을 수 없습니다.\n"
+        f"대한통운 파일에서 '{field_name}' 컬럼을 찾을 수 없습니다. 파일 양식을 확인해 주세요.\n"
         f"탐색 키워드: {keywords}\n"
         f"실제 컬럼 목록: {cols}"
     )
