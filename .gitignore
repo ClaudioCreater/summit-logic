@@ -1,0 +1,22 @@
+# 더미 및 테스트용 엑셀 파일
+dummy_smart.xlsx
+dummy_cj.xlsx
+final_upload.xlsx
+
+# Python 캐시
+__pycache__/
+*.py[cod]
+*.pyo
+
+# 가상환경
+.venv/
+venv/
+env/
+
+# OS 관련
+.DS_Store
+Thumbs.db
+
+# 에디터 설정
+.vscode/
+.idea/
