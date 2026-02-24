@@ -227,7 +227,7 @@ def read_naver_excel(file_obj) -> pd.DataFrame:
     df = pd.read_excel(file_obj, header=header_row, dtype=str)
     df = df.fillna("")
 
-    order_col = df.columns[0]
+    order_col = df.columns[NAVER["상품주문번호"]]
     df = df[
         (df[order_col].str.strip() != "") &
         (df[order_col].str.strip() != "상품주문번호")
@@ -306,7 +306,15 @@ def build_cj_upload_df(df_smart: pd.DataFrame) -> tuple[pd.DataFrame, int]:
             else f"{products[0]} 외 {len(products) - 1}건"
         )
         try:
-            qty_list = [int(q) for q in group["수량"] if str(q).strip().isdigit()]
+            # isdigit()은 "2.0" 같은 소수 문자열을 거르므로 float() 경유로 파싱
+            qty_list = []
+            for q in group["수량"]:
+                s = str(q).strip()
+                if s and s.lower() not in ("nan", "none", ""):
+                    try:
+                        qty_list.append(int(float(s)))
+                    except ValueError:
+                        pass
             total_qty = sum(qty_list) if qty_list else first["수량"]
         except Exception:
             total_qty = first["수량"]
@@ -332,7 +340,7 @@ def build_cj_upload_df(df_smart: pd.DataFrame) -> tuple[pd.DataFrame, int]:
 def match_and_fill_waybill(
     smart_file_obj,
     cj_df: pd.DataFrame,
-) -> tuple[bytes, int, int, list[str]]:
+) -> tuple[bytes, int, int, list[str], dict[str, str]]:
     """
     [템플릿 유지형 + 합배송 대응] 스마트스토어 원본에 송장번호를 기입합니다.
 
@@ -345,7 +353,7 @@ def match_and_fill_waybill(
        (1·2행 안내 문구, 서식, 수식 등 모든 원본 내용 보존)
 
     Returns:
-        tuple: (수정된 엑셀 바이트, 매칭 성공 건수, 미발급 건수, 미발급 주문번호 목록)
+        tuple: (수정된 엑셀 바이트, 매칭 성공 건수, 미발급 건수, 미발급 주문번호 목록, 주문→송장 최종 매핑 dict)
     """
     # ── [V3.1] 지능형 컬럼 탐색으로 CJ 룩업 생성 ──
     # '운송장번호', '송장번호', 'invoice' 등 유사 명칭 컬럼 자동 인식
@@ -420,7 +428,7 @@ def match_and_fill_waybill(
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    return buf.getvalue(), matched, unmatched, unmatched_list
+    return buf.getvalue(), matched, unmatched, unmatched_list, order_to_waybill
 
 
 # ===========================================================

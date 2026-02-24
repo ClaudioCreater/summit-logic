@@ -16,7 +16,6 @@ Streamlit 메인 진입점. UI 구성 및 탭 레이아웃만 담당합니다.
 import pandas as pd
 import streamlit as st
 
-from data_cleaner import clean_text, clean_phone, truncate_address
 from security_utils import ACCESS_KEY, unlock_excel
 from logistics_engine import (
     NAVER,
@@ -442,8 +441,7 @@ with tab2:
                         _buf_diag = unlock_excel(uploaded_smart_t2, pw_t2)
                         _hdr = find_header_row(_buf_diag)
                         _buf_diag.seek(0)
-                        import pandas as _pd
-                        _df_diag = _pd.read_excel(_buf_diag, header=_hdr, dtype=str, nrows=0)
+                        _df_diag = pd.read_excel(_buf_diag, header=_hdr, dtype=str, nrows=0)
                         st.markdown(
                             f"헤더 위치: **Row {_hdr + 1}** &nbsp;|&nbsp; "
                             f"컬럼 수: **{len(_df_diag.columns)}개**"
@@ -506,7 +504,7 @@ with tab2:
                     # [V3.1] 지능형 컬럼 탐색으로 유효성 검사 (정확한 오류 메시지 포함)
                     cj_detected = map_cj_columns(df_cj)  # ValueError 시 즉시 중단
 
-                    result_bytes, matched, unmatched, unmatched_list = match_and_fill_waybill(
+                    result_bytes, matched, unmatched, unmatched_list, order_to_waybill = match_and_fill_waybill(
                         smart_file_obj=unlocked_smart_t2,
                         cj_df=df_cj,
                     )
@@ -555,30 +553,13 @@ with tab2:
                     st.success("모든 주문의 송장번호가 성공적으로 매칭되었습니다!")
 
                 # ── 결과 미리보기 ──
+                # match_and_fill_waybill이 반환한 order_to_waybill을 직접 사용
+                # → 별도 그룹 계산 없이 정확한 매칭 결과 반영
                 header_row_prev = find_header_row(unlocked_smart_t2)
                 unlocked_smart_t2.seek(0)
                 df_preview = pd.read_excel(
                     unlocked_smart_t2, header=header_row_prev, dtype=str
                 ).fillna("")
-
-                cj_lkp = dict(
-                    zip(df_cj["고객주문번호"].str.strip(), df_cj["운송장번호"].str.strip())
-                )
-                ck = pd.DataFrame({
-                    "order_no": df_preview.iloc[:, NAVER["상품주문번호"]].str.strip(),
-                    "name":  df_preview.iloc[:, NAVER["수취인명"]].apply(
-                                 lambda x: clean_text(str(x))),
-                    "phone": df_preview.iloc[:, NAVER["수취인연락처1"]].apply(
-                                 lambda x: clean_phone(str(x))),
-                    "addr":  df_preview.iloc[:, NAVER["합배송지"]].apply(
-                                 lambda x: truncate_address(clean_text(str(x)))),
-                })
-                rep_prev: dict = {}
-                for _, grp in ck.groupby(["name", "phone", "addr"], sort=False):
-                    ords = grp["order_no"].tolist()
-                    r = ords[0]
-                    for o in ords:
-                        rep_prev[o] = r
 
                 preview = df_preview.iloc[:, [
                     NAVER["상품주문번호"], NAVER["수취인명"],
@@ -589,8 +570,7 @@ with tab2:
 
                 for i, row in preview.iterrows():
                     key  = str(row["상품주문번호"]).strip()
-                    rep  = rep_prev.get(key, key)
-                    wb_n = cj_lkp.get(rep, "") or cj_lkp.get(key, "")
+                    wb_n = order_to_waybill.get(key, "")
                     preview.at[i, "택배사"]  = "CJ대한통운" if wb_n else "미발급"
                     preview.at[i, "송장번호"] = wb_n if wb_n else "미발급"
 
