@@ -46,14 +46,38 @@ NAVER_DATA_START_ROW = 3   # openpyxl 1-indexed 기준 데이터 시작 행
 # 유틸 함수
 # ===========================================================
 
+def find_header_row(file_obj) -> int:
+    """
+    '상품주문번호' 텍스트가 포함된 행의 인덱스를 찾아 반환합니다.
+
+    네이버 스마트스토어 엑셀은 상단에 안내 문구 행이 1개 이상 있어서
+    헤더 위치가 파일마다 달라질 수 있습니다.
+    → 전체를 header=None으로 한 번 읽은 뒤,
+      각 행을 순회하며 '상품주문번호' 텍스트가 있는 행을 헤더로 확정합니다.
+    """
+    file_obj.seek(0)
+    df_raw = pd.read_excel(file_obj, header=None, dtype=str, nrows=10)
+    for idx, row in df_raw.iterrows():
+        if row.astype(str).str.contains("상품주문번호", na=False).any():
+            return int(idx)
+    raise ValueError(
+        "'상품주문번호' 컬럼을 찾을 수 없습니다.\n"
+        "네이버 스마트스토어에서 다운로드한 원본 엑셀 파일인지 확인해 주세요."
+    )
+
+
 def read_naver_excel(file_obj) -> pd.DataFrame:
     """
     네이버 스마트스토어 주문 엑셀을 안전하게 읽습니다.
-      header=1 → 2번째 행(컬럼명 행)을 헤더로 사용
-      dtype=str → 주문번호·전화번호 앞자리 0 보존
+
+    - '상품주문번호'가 있는 행을 동적으로 탐색해 헤더로 설정
+      (안내 문구 행 수가 달라도 항상 정확한 헤더를 잡음)
+    - dtype=str → 주문번호·전화번호 앞자리 0 보존
+    - fillna("") → 빈칸을 NaN 대신 빈 문자열로 변환
     """
+    header_row = find_header_row(file_obj)
     file_obj.seek(0)
-    df = pd.read_excel(file_obj, header=1, dtype=str)
+    df = pd.read_excel(file_obj, header=header_row, dtype=str)
     return df.fillna("")
 
 
@@ -467,8 +491,9 @@ with tab2:
                     st.success("모든 주문의 송장번호가 성공적으로 매칭되었습니다!")
 
                 # 결과 미리보기
+                header_row_prev = find_header_row(uploaded_smart_t2)
                 uploaded_smart_t2.seek(0)
-                df_preview = pd.read_excel(uploaded_smart_t2, header=1, dtype=str).fillna("")
+                df_preview = pd.read_excel(uploaded_smart_t2, header=header_row_prev, dtype=str).fillna("")
                 cj_lookup_prev = dict(
                     zip(df_cj["고객주문번호"].str.strip(), df_cj["운송장번호"].str.strip())
                 )
