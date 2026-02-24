@@ -1,312 +1,31 @@
 # -*- coding: utf-8 -*-
 """
-===========================================================
-  Summit Logic V3 - 스마트스토어 × 대한통운 LOIS 자동화 도구
-===========================================================
+app.py — Summit Logic V3
+─────────────────────────
+Streamlit 메인 진입점. UI 구성 및 탭 레이아웃만 담당합니다.
+
+핵심 로직은 아래 모듈에서 import합니다:
+  data_cleaner      → 이모지·전화번호·주소 정제 함수
+  security_utils    → Access Key 상수, 엑셀 암호 해제
+  logistics_engine  → 헤더 탐색, 엑셀 읽기, 접수 파일 생성, 송장 매칭
+
 [실행]  streamlit run app.py
 [배포]  summitlogic.streamlit.app
-[V3]   합배송 지능형 처리 / 데이터 정제 / 사이트 보안 잠금
-===========================================================
 """
 
-import io
-import re
-import msoffcrypto
 import pandas as pd
 import streamlit as st
-from openpyxl import load_workbook
 
-
-# ===========================================================
-# 상수: 네이버 스마트스토어 엑셀 컬럼 인덱스 (0-based)
-# ===========================================================
-NAVER = {
-    "상품주문번호":  0,   # A열
-    "택배사":       7,   # H열
-    "송장번호":     8,   # I열
-    "수취인명":     13,  # N열
-    "상품명":       20,  # U열
-    "수량":         26,  # AA열
-    "수취인연락처1": 48,  # AW열
-    "합배송지":     50,  # AY열
-    "우편번호":     54,  # BC열
-    "배송메세지":   55,  # BD열
-}
-
-# ── 보안: 사이트 접근 제어 키 (운영 환경에서는 st.secrets 로 교체 권장) ──
-ACCESS_KEY = "summit2026"
-
-# ── CJ LOIS 주소 필드 최대 길이 ──
-ADDRESS_MAX_LEN = 100
-
-
-# ===========================================================
-# [V3 신규] 데이터 정제 함수
-# ===========================================================
-
-# 이모지 및 기타 기호 범위 (유니코드 블록 기준)
-_EMOJI_RE = re.compile(
-    "["
-    "\U0001F000-\U0001FFFF"   # Misc Symbols, Emoticons, Transport, etc.
-    "\U00002600-\U000027BF"   # Misc Symbols, Dingbats
-    "\U0000200B-\U0000200F"   # Zero-width chars (ZWSP, ZWNJ, ZWJ, LRM, RLM)
-    "\U0000FE00-\U0000FE0F"   # Variation Selectors
-    "]+",
-    flags=re.UNICODE,
+from data_cleaner import clean_text, clean_phone, truncate_address
+from security_utils import ACCESS_KEY, unlock_excel
+from logistics_engine import (
+    NAVER,
+    find_header_row,
+    read_naver_excel,
+    build_cj_upload_df,
+    match_and_fill_waybill,
+    df_to_excel_bytes,
 )
-
-
-def clean_text(text: str) -> str:
-    """
-    이름·주소·배송메시지에서 이모지 및 제어문자를 제거합니다.
-    한글, 영문, 숫자, 공백, 기본 구두점(-.,()/)은 그대로 보존합니다.
-    """
-    text = _EMOJI_RE.sub("", str(text))
-    # 탭·줄바꿈 등 제어문자를 공백으로 치환
-    text = re.sub(r"[\x00-\x1f\x7f]", " ", text)
-    # 연속된 공백을 하나로 압축
-    text = re.sub(r" {2,}", " ", text)
-    return text.strip()
-
-
-def clean_phone(phone: str) -> str:
-    """
-    전화번호에서 하이픈·공백·괄호 등 숫자 이외의 모든 문자를 제거합니다.
-    예) 010-1234-5678  →  01012345678
-    """
-    return re.sub(r"[^0-9]", "", str(phone))
-
-
-def truncate_address(address: str, max_len: int = ADDRESS_MAX_LEN) -> str:
-    """
-    주소가 CJ LOIS 업로드 길이 제한(기본 100자)을 초과하면 잘라냅니다.
-    """
-    return address[:max_len] if len(address) > max_len else address
-
-
-# ===========================================================
-# 유틸 함수 (V2.2 헤더 탐색 로직 유지)
-# ===========================================================
-
-def find_header_row(file_obj) -> int:
-    """
-    '상품주문번호' 텍스트와 정확히 일치하는 셀이 있는 행 번호(0-based)를 반환합니다.
-
-    contains() 대신 == 비교를 사용해, Row 0 안내 문구에 '상품주문번호'가
-    설명 텍스트로 포함된 경우에도 헤더를 잘못 잡지 않습니다.
-    """
-    file_obj.seek(0)
-    df_raw = pd.read_excel(file_obj, header=None, dtype=str)
-    for idx, row in df_raw.iterrows():
-        if (row.astype(str).str.strip() == "상품주문번호").any():
-            return int(idx)
-    raise ValueError(
-        "'상품주문번호' 컬럼을 찾을 수 없습니다.\n"
-        "네이버 스마트스토어에서 다운로드한 원본 엑셀 파일인지 확인해 주세요."
-    )
-
-
-def read_naver_excel(file_obj) -> pd.DataFrame:
-    """
-    네이버 스마트스토어 주문 엑셀을 안전하게 읽습니다.
-
-    1. '상품주문번호'가 정확히 일치하는 행을 헤더로 동적 탐색
-    2. 빈 행 / 중복 헤더 잔재 행 제거
-    3. dtype=str → 주문번호·전화번호 앞자리 0 보존
-    """
-    header_row = find_header_row(file_obj)
-    file_obj.seek(0)
-    df = pd.read_excel(file_obj, header=header_row, dtype=str)
-    df = df.fillna("")
-    order_col = df.columns[0]
-    df = df[
-        (df[order_col].str.strip() != "") &
-        (df[order_col].str.strip() != "상품주문번호")
-    ].reset_index(drop=True)
-    return df
-
-
-def build_cj_upload_df(df_smart: pd.DataFrame) -> tuple:
-    """
-    [V3] 스마트스토어 데이터프레임 → CJ 대한통운 LOIS 접수 양식 변환
-
-    변경사항 (V3):
-    1. 데이터 정제
-       - 이름·주소·배송메시지: 이모지·제어문자 제거 (clean_text)
-       - 전화번호: 숫자만 추출 (clean_phone)
-       - 주소: 길이 초과 시 잘라냄 (truncate_address)
-    2. 합배송(Bundling) 처리
-       - 수취인명 + 연락처 + 주소가 동일한 주문을 1건으로 묶음
-       - 상품명: "상품A 외 N건" 형태로 요약
-       - 수량: 그룹 내 합산
-       - 고객주문번호: 그룹의 첫 번째 상품주문번호 (Tab 2 매칭 키)
-
-    반환: (변환 DataFrame, 원본 주문 건수)
-    """
-    # ── 1) 추출 + 정제 ──
-    df = pd.DataFrame({
-        "고객주문번호": df_smart.iloc[:, NAVER["상품주문번호"]].str.strip(),
-        "수취인명":     df_smart.iloc[:, NAVER["수취인명"]].apply(
-                            lambda x: clean_text(str(x))),
-        "연락처":       df_smart.iloc[:, NAVER["수취인연락처1"]].apply(
-                            lambda x: clean_phone(str(x))),
-        "우편번호":     df_smart.iloc[:, NAVER["우편번호"]].str.strip(),
-        "주소":         df_smart.iloc[:, NAVER["합배송지"]].apply(
-                            lambda x: truncate_address(clean_text(str(x)))),
-        "상품명":       df_smart.iloc[:, NAVER["상품명"]].str.strip(),
-        "수량":         df_smart.iloc[:, NAVER["수량"]].str.strip(),
-        "배송메시지":   df_smart.iloc[:, NAVER["배송메세지"]].apply(
-                            lambda x: clean_text(str(x))),
-    })
-    df = df[df["고객주문번호"] != ""].reset_index(drop=True)
-    original_count = len(df)
-
-    # ── 2) 합배송 그룹핑: 수취인명 + 연락처 + 주소 기준 ──
-    rows = []
-    for (name, phone, addr), group in df.groupby(
-        ["수취인명", "연락처", "주소"], sort=False
-    ):
-        first = group.iloc[0]
-        products = group["상품명"].tolist()
-
-        # 상품명 요약: 1건이면 그대로, 2건 이상이면 "상품A 외 N건"
-        product_summary = (
-            products[0]
-            if len(products) == 1
-            else f"{products[0]} 외 {len(products) - 1}건"
-        )
-
-        # 수량 합산 (숫자 변환 불가 시 첫 번째 값 사용)
-        try:
-            qty_list = [int(q) for q in group["수량"] if str(q).strip().isdigit()]
-            total_qty = sum(qty_list) if qty_list else first["수량"]
-        except Exception:
-            total_qty = first["수량"]
-
-        rows.append({
-            "고객주문번호": first["고객주문번호"],
-            "수취인명":     name,
-            "연락처":       phone,
-            "우편번호":     first["우편번호"],
-            "주소":         addr,
-            "상품명":       product_summary,
-            "수량":         str(total_qty),
-            "배송메시지":   first["배송메시지"],
-        })
-
-    return pd.DataFrame(rows), original_count
-
-
-def match_and_fill_waybill(smart_file_obj, cj_df: pd.DataFrame):
-    """
-    [V3 템플릿 유지형 + 합배송 대응 송장 매칭]
-
-    변경사항 (V3):
-    - 합배송 그룹 인식: Tab 1과 동일한 정제 기준(수취인명+연락처+주소)으로 그룹화.
-      그룹의 대표 주문번호(= Tab 1에서 CJ에 넘긴 고객주문번호)로 CJ 조회.
-      조회된 송장번호를 그룹 내 모든 상품주문번호 행에 동일하게 기입.
-
-    반환: (엑셀 바이트, 매칭 성공 건수, 미발급 건수, 미발급 주문번호 목록)
-    """
-    # ── CJ 룩업: 고객주문번호 → 운송장번호 ──
-    cj_lookup: dict = {}
-    for _, row in cj_df.iterrows():
-        key = str(row.get("고객주문번호", "")).strip()
-        val = str(row.get("운송장번호", "")).strip()
-        if key and key not in cj_lookup:
-            cj_lookup[key] = val
-
-    # ── 스마트스토어 읽기 + 합배송 그룹 구성 (Tab 1과 완전 동일한 정제 기준) ──
-    df_smart = read_naver_excel(smart_file_obj)
-
-    clean_keys = pd.DataFrame({
-        "order_no": df_smart.iloc[:, NAVER["상품주문번호"]].str.strip(),
-        "name":     df_smart.iloc[:, NAVER["수취인명"]].apply(
-                        lambda x: clean_text(str(x))),
-        "phone":    df_smart.iloc[:, NAVER["수취인연락처1"]].apply(
-                        lambda x: clean_phone(str(x))),
-        "addr":     df_smart.iloc[:, NAVER["합배송지"]].apply(
-                        lambda x: truncate_address(clean_text(str(x)))),
-    })
-    clean_keys = clean_keys[clean_keys["order_no"] != ""].reset_index(drop=True)
-
-    # 각 주문번호 → 그룹 대표 주문번호 매핑
-    # (같은 수취인·연락처·주소 그룹의 첫 번째 주문번호 = Tab 1의 고객주문번호)
-    rep_of: dict = {}
-    for _, group in clean_keys.groupby(["name", "phone", "addr"], sort=False):
-        orders = group["order_no"].tolist()
-        rep = orders[0]
-        for o in orders:
-            rep_of[o] = rep
-
-    # 최종 맵: 주문번호 → 송장번호
-    # 대표 번호로 CJ 조회, 없으면 직접 조회도 시도 (단건 주문 대응)
-    order_to_waybill: dict = {}
-    for order_no, rep in rep_of.items():
-        waybill = cj_lookup.get(rep, "") or cj_lookup.get(order_no, "")
-        if waybill:
-            order_to_waybill[order_no] = waybill
-
-    # ── 헤더 위치 기반 데이터 시작 행 계산 (동적) ──
-    header_idx = find_header_row(smart_file_obj)
-    data_start_row = header_idx + 2  # 0-indexed → 1-indexed(+1) → 다음 행(+1)
-
-    # ── openpyxl 로 원본 파일 로드 (템플릿 유지) ──
-    smart_file_obj.seek(0)
-    wb = load_workbook(smart_file_obj)
-    ws = wb.active
-
-    matched = 0
-    unmatched = 0
-    unmatched_list: list = []
-
-    for row_cells in ws.iter_rows(min_row=data_start_row, max_row=ws.max_row):
-        order_no = str(row_cells[NAVER["상품주문번호"]].value or "").strip()
-        if not order_no:
-            continue
-
-        waybill = order_to_waybill.get(order_no, "")
-        if waybill:
-            row_cells[NAVER["택배사"]].value   = "CJ대한통운"
-            row_cells[NAVER["송장번호"]].value = waybill
-            matched += 1
-        else:
-            row_cells[NAVER["택배사"]].value   = "미발급"
-            row_cells[NAVER["송장번호"]].value = "미발급"
-            unmatched += 1
-            unmatched_list.append(order_no)
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf.getvalue(), matched, unmatched, unmatched_list
-
-
-def unlock_excel(file_obj, password: str = "") -> io.BytesIO:
-    """
-    엑셀 암호를 해제하여 BytesIO로 반환합니다.
-    비밀번호가 없으면 그대로 BytesIO로 변환합니다.
-    """
-    file_obj.seek(0)
-    raw = file_obj.read()
-    if not password.strip():
-        return io.BytesIO(raw)
-    encrypted_buf = io.BytesIO(raw)
-    office_file = msoffcrypto.OfficeFile(encrypted_buf)
-    office_file.load_key(password=password.strip())
-    decrypted_buf = io.BytesIO()
-    office_file.decrypt(decrypted_buf)
-    decrypted_buf.seek(0)
-    return decrypted_buf
-
-
-def df_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Sheet1") -> bytes:
-    """데이터프레임 → 엑셀 바이트 스트림 변환 (다운로드 버튼용)"""
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name)
-    buf.seek(0)
-    return buf.getvalue()
 
 
 # ===========================================================
@@ -351,9 +70,8 @@ st.markdown(
         .result-grid { display: flex; gap: 16px; margin: 20px 0; flex-wrap: wrap; }
         .stat-card {
             flex: 1; min-width: 100px;
-            background: #ffffff;
-            border: 1px solid #e8eaed; border-radius: 12px;
-            padding: 20px 16px; text-align: center;
+            background: #ffffff; border: 1px solid #e8eaed;
+            border-radius: 12px; padding: 20px 16px; text-align: center;
             box-shadow: 0 1px 3px rgba(0,0,0,0.06);
         }
         .stat-card .stat-number { font-size: 2rem; font-weight: 700; margin-bottom: 4px; }
@@ -368,21 +86,16 @@ st.markdown(
             border-radius: 8px; padding: 14px 18px;
             font-size: 0.85rem; color: #c5221f;
         }
-
         .info-banner {
             background: #e8f0fe; border-radius: 8px;
             padding: 14px 18px; color: #1a56a4;
             font-size: 0.88rem; text-align: center; margin-top: 8px;
         }
-
-        /* [V3] 합배송 뱃지 */
         .bundle-info {
             background: #e6f4ea; border: 1px solid #ceead6;
             border-radius: 8px; padding: 12px 16px;
             font-size: 0.85rem; color: #137333; margin: 8px 0;
         }
-
-        /* [V3] Access Key 잠금 화면 */
         .lock-overlay {
             background: #f8f9fa; border: 1px dashed #dadce0;
             border-radius: 16px; padding: 52px 24px;
@@ -407,8 +120,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
 # ===========================================================
-# [V3 신규] 사이드바: Access Key
+# 사이드바: Access Key (security_utils.ACCESS_KEY 참조)
 # ===========================================================
 with st.sidebar:
     st.markdown("### 🔐 Access Control")
@@ -428,6 +142,7 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Summit Logic V3")
 
+
 # ── 앱 헤더 ──
 st.markdown(
     """
@@ -441,8 +156,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
 # ===========================================================
-# [V3] Access Key 게이트 — 인증 실패 시 이하 모든 기능 차단
+# Access Key 게이트 — 인증 실패 시 이하 모든 기능 차단
 # ===========================================================
 if access_input != ACCESS_KEY:
     st.markdown(
@@ -469,6 +185,8 @@ tab1, tab2 = st.tabs(["  📋 1. 접수 파일 생성  ", "  🔗 2. 송장 번�
 
 # ===========================================================
 # 탭 1: 접수 파일 생성
+#   스마트스토어 주문서 → CJ LOIS 접수 양식 변환
+#   (합배송 자동 감지 + 데이터 정제 포함)
 # ===========================================================
 with tab1:
 
@@ -511,10 +229,9 @@ with tab1:
             unlocked_t1 = unlock_excel(uploaded_t1, pw_t1)
             df_smart = read_naver_excel(unlocked_t1)
 
-            # [V3] build_cj_upload_df 는 (df, original_count) 튜플 반환
             df_cj_upload, original_count = build_cj_upload_df(df_smart)
-            total = len(df_cj_upload)
-            bundled = original_count - total  # 합배송으로 절약된 건수
+            total   = len(df_cj_upload)
+            bundled = original_count - total
 
             # ── 결과 통계 카드 ──
             bundle_html = (
@@ -541,7 +258,6 @@ with tab1:
                 unsafe_allow_html=True,
             )
 
-            # 합배송 안내 메시지
             if bundled > 0:
                 st.markdown(
                     f"""
@@ -553,19 +269,18 @@ with tab1:
                     unsafe_allow_html=True,
                 )
 
-            # 컬럼 매핑 안내
             with st.expander("컬럼 매핑 확인"):
                 st.table(pd.DataFrame({
                     "스마트스토어 컬럼": [
                         "A열 상품주문번호", "N열 수취인명", "AW열 수취인연락처1",
-                        "BC열 우편번호", "AY열 합배송지", "U열 상품명",
-                        "AA열 수량", "BD열 배송메세지",
+                        "BC열 우편번호",    "AY열 합배송지", "U열 상품명",
+                        "AA열 수량",        "BD열 배송메세지",
                     ],
                     "→ CJ LOIS 컬럼": [
-                        "고객주문번호", "수취인명 (이모지 제거)",
-                        "연락처 (숫자만)", "우편번호",
-                        "주소 (이모지 제거, 100자 제한)", "상품명 (합배송 요약)",
-                        "수량 (합산)", "배송메시지 (이모지 제거)",
+                        "고객주문번호",        "수취인명 (이모지 제거)",
+                        "연락처 (숫자만)",     "우편번호",
+                        "주소 (이모지·100자)", "상품명 (합배송 요약)",
+                        "수량 (합산)",         "배송메시지 (이모지 제거)",
                     ],
                 }))
 
@@ -601,6 +316,8 @@ with tab1:
 
 # ===========================================================
 # 탭 2: 송장 번호 매칭
+#   스마트스토어 원본 + CJ LOIS 결과 → 송장번호 자동 기입
+#   합배송 묶음 전체에 동일 송장번호 입력
 # ===========================================================
 with tab2:
 
@@ -678,8 +395,10 @@ with tab2:
                     unlocked_smart_t2 = unlock_excel(uploaded_smart_t2, pw_t2)
 
                     df_cj = pd.read_excel(uploaded_cj_t2, dtype=str).fillna("")
-                    required_cj = ["고객주문번호", "운송장번호"]
-                    missing_cols = [c for c in required_cj if c not in df_cj.columns]
+                    missing_cols = [
+                        c for c in ["고객주문번호", "운송장번호"]
+                        if c not in df_cj.columns
+                    ]
                     if missing_cols:
                         raise ValueError(
                             f"대한통운 파일에 필수 컬럼이 없습니다: {missing_cols}\n"
@@ -693,6 +412,7 @@ with tab2:
 
                 total = matched + unmatched
 
+                # ── 결과 통계 ──
                 st.markdown("### 📊 매칭 결과 요약")
                 st.markdown(
                     f"""
@@ -717,11 +437,7 @@ with tab2:
                 if unmatched_list:
                     miss_html = "<br>".join(f"• {o}" for o in unmatched_list)
                     st.markdown(
-                        f"""
-                        <div class="miss-box">
-                            <b>⚠ 미발급 주문번호 목록</b><br><br>{miss_html}
-                        </div>
-                        """,
+                        f'<div class="miss-box"><b>⚠ 미발급 주문번호 목록</b><br><br>{miss_html}</div>',
                         unsafe_allow_html=True,
                     )
                     st.markdown("<br>", unsafe_allow_html=True)
@@ -735,23 +451,24 @@ with tab2:
                     unlocked_smart_t2, header=header_row_prev, dtype=str
                 ).fillna("")
 
-                cj_lookup_prev = dict(
+                cj_lkp = dict(
                     zip(df_cj["고객주문번호"].str.strip(), df_cj["운송장번호"].str.strip())
                 )
-
-                # Tab 2 미리보기에서도 합배송 그룹 대응
-                clean_keys_prev = pd.DataFrame({
+                ck = pd.DataFrame({
                     "order_no": df_preview.iloc[:, NAVER["상품주문번호"]].str.strip(),
-                    "name":     df_preview.iloc[:, NAVER["수취인명"]].apply(lambda x: clean_text(str(x))),
-                    "phone":    df_preview.iloc[:, NAVER["수취인연락처1"]].apply(lambda x: clean_phone(str(x))),
-                    "addr":     df_preview.iloc[:, NAVER["합배송지"]].apply(lambda x: truncate_address(clean_text(str(x)))),
+                    "name":  df_preview.iloc[:, NAVER["수취인명"]].apply(
+                                 lambda x: clean_text(str(x))),
+                    "phone": df_preview.iloc[:, NAVER["수취인연락처1"]].apply(
+                                 lambda x: clean_phone(str(x))),
+                    "addr":  df_preview.iloc[:, NAVER["합배송지"]].apply(
+                                 lambda x: truncate_address(clean_text(str(x)))),
                 })
-                rep_of_prev: dict = {}
-                for _, grp in clean_keys_prev.groupby(["name", "phone", "addr"], sort=False):
+                rep_prev: dict = {}
+                for _, grp in ck.groupby(["name", "phone", "addr"], sort=False):
                     ords = grp["order_no"].tolist()
                     r = ords[0]
                     for o in ords:
-                        rep_of_prev[o] = r
+                        rep_prev[o] = r
 
                 preview = df_preview.iloc[:, [
                     NAVER["상품주문번호"], NAVER["수취인명"],
@@ -761,11 +478,11 @@ with tab2:
                 preview = preview[preview["상품주문번호"].str.strip() != ""].copy()
 
                 for i, row in preview.iterrows():
-                    key = str(row["상품주문번호"]).strip()
-                    rep = rep_of_prev.get(key, key)
-                    wb_no = cj_lookup_prev.get(rep, "") or cj_lookup_prev.get(key, "")
-                    preview.at[i, "택배사"]  = "CJ대한통운" if wb_no else "미발급"
-                    preview.at[i, "송장번호"] = wb_no if wb_no else "미발급"
+                    key  = str(row["상품주문번호"]).strip()
+                    rep  = rep_prev.get(key, key)
+                    wb_n = cj_lkp.get(rep, "") or cj_lkp.get(key, "")
+                    preview.at[i, "택배사"]  = "CJ대한통운" if wb_n else "미발급"
+                    preview.at[i, "송장번호"] = wb_n if wb_n else "미발급"
 
                 with st.expander("📋 결과 미리보기", expanded=False):
                     st.dataframe(preview, use_container_width=True)
