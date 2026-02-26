@@ -181,7 +181,7 @@ st.markdown(
         <h1>📦 Summit Logic</h1>
         <p>스마트스토어 주문서를 업로드하면<br>
         CJ 대한통운·로젠·한진택배 접수 파일 생성과<br>
-        CJ 대한통운 결과 기준 송장번호 매칭을 자동으로 처리해 드립니다.</p>
+        선택한 택배사의 운송장 결과 기준 송장번호 매칭을 자동으로 처리해 드립니다.</p>
     </div>
     <hr class="divider">
     """,
@@ -545,7 +545,7 @@ with tab2:
                     st.caption("파일을 업로드하면 진단 결과가 표시됩니다.")
 
             with diag_col2:
-                st.markdown("**② CJ LOIS 파일**")
+                st.markdown("**② 택배사 결과 파일**")
                 if uploaded_cj_t2:
                     try:
                         _df_cj_diag = pd.read_excel(uploaded_cj_t2, dtype=str, nrows=0)
@@ -569,7 +569,7 @@ with tab2:
         if not uploaded_smart_t2 or not uploaded_cj_t2:
             missing = []
             if not uploaded_smart_t2: missing.append("스마트스토어 원본 파일 ①")
-            if not uploaded_cj_t2:    missing.append("대한통운 LOIS 결과 파일 ②")
+            if not uploaded_cj_t2:    missing.append("택배사 운송장 결과 파일 ②")
             st.markdown(
                 f'<div class="info-banner">📂 <b>{", ".join(missing)}</b>를 먼저 업로드해주세요.</div>',
                 unsafe_allow_html=True,
