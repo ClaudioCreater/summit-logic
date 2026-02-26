@@ -22,10 +22,14 @@ from logistics_engine import (
     find_header_row,
     read_naver_excel,
     build_cj_upload_df,
+    build_courier_upload_df,
+    export_to_excel,
     match_and_fill_waybill,
     df_to_excel_bytes,
     map_cj_columns,
     diagnose_smart_file,
+    validate_format,
+    FormatError,
 )
 
 
@@ -217,11 +221,11 @@ tab1, tab2 = st.tabs(["  📋 1. 접수 파일 생성  ", "  🔗 2. 송장 번�
 # ===========================================================
 with tab1:
 
-    st.markdown("#### 대한통운 LOIS 접수 파일 생성")
+    st.markdown("#### 택배사 접수 파일 생성")
     st.markdown(
         """
         <div class="info-banner">
-            네이버 스마트스토어 주문서를 올리면 CJ 대한통운 LOIS 업로드 전용 양식으로 변환합니다.<br>
+            네이버 스마트스토어 주문서를 올리면 선택한 택배사의 업로드 전용 양식으로 변환합니다.<br>
             <small>스마트스토어 &gt; 발주(주문)확인/발송관리 &gt; 엑셀 다운로드 파일을 사용하세요.</small>
         </div>
         """,
@@ -251,6 +255,19 @@ with tab1:
         placeholder="엑셀 파일에 비밀번호가 있는 경우에만 입력하세요",
     )
 
+    # ── 택배사 선택 ──
+    courier_label = st.selectbox(
+        "택배사 선택",
+        options=["CJ 대한통운 (LOIS)", "로젠택배 (LOGEN)", "한진택배 (HANJIN)"],
+        index=0,
+    )
+    if "CJ" in courier_label:
+        courier_key = "CJ"
+    elif "로젠" in courier_label or "LOGEN" in courier_label.upper():
+        courier_key = "LOGEN"
+    else:
+        courier_key = "HANJIN"
+
     if uploaded_t1:
         try:
             unlocked_t1 = unlock_excel(uploaded_t1, pw_t1)
@@ -258,6 +275,9 @@ with tab1:
             # ── [V3.1] 헤더 위치 탐색 (진단용) ──
             detected_header_row = find_header_row(unlocked_t1)
             df_smart = read_naver_excel(unlocked_t1)
+
+            # 스마트스토어 양식 유효성 검사 (행/컬럼 개수 등)
+            validate_format("smart", df_smart)
 
             # ── [V3.1] 진단 모드: 인식된 헤더 정보 표시 ──
             diag = diagnose_smart_file(df_smart, detected_header_row)
@@ -281,8 +301,10 @@ with tab1:
                     hide_index=True,
                 )
 
-            df_cj_upload, original_count = build_cj_upload_df(df_smart)
-            total   = len(df_cj_upload)
+            # 선택한 택배사 업로드 양식으로 변환
+            export_bytes, df_export, original_count, total = export_to_excel(
+                df_smart, courier_key
+            )
             bundled = original_count - total
 
             # ── 결과 통계 카드 ──
@@ -321,35 +343,76 @@ with tab1:
                     unsafe_allow_html=True,
                 )
 
+            # ── 컬럼 매핑 안내 (택배사별 설명) ──
             with st.expander("컬럼 매핑 확인"):
-                st.table(pd.DataFrame({
-                    "스마트스토어 컬럼": [
-                        "A열 상품주문번호", "N열 수취인명", "AW열 수취인연락처1",
-                        "BC열 우편번호",    "AY열 합배송지", "U열 상품명",
-                        "AA열 수량",        "BD열 배송메세지",
-                    ],
-                    "→ CJ LOIS 컬럼": [
-                        "고객주문번호",        "수취인명 (이모지 제거)",
-                        "연락처 (숫자만)",     "우편번호",
-                        "주소 (이모지·100자)", "상품명 (합배송 요약)",
-                        "수량 (합산)",         "배송메시지 (이모지 제거)",
-                    ],
-                }))
+                if courier_key == "CJ":
+                    st.table(pd.DataFrame({
+                        "스마트스토어 컬럼": [
+                            "A열 상품주문번호", "N열 수취인명", "AW열 수취인연락처1",
+                            "BC열 우편번호",    "AY열 합배송지", "U열 상품명",
+                            "AA열 수량",        "BD열 배송메세지",
+                        ],
+                        "→ 택배사 업로드 컬럼": [
+                            "고객주문번호",        "수취인명 (이모지 제거)",
+                            "연락처 (숫자만)",     "우편번호",
+                            "주소 (이모지·100자)", "상품명 (합배송 요약)",
+                            "수량 (합산)",         "배송메시지 (이모지 제거)",
+                        ],
+                    }))
+                elif courier_key == "LOGEN":
+                    st.table(pd.DataFrame({
+                        "스마트스토어 컬럼": [
+                            "N열 수취인명", "BC열 우편번호", "AY열 합배송지",
+                            "AW열 수취인연락처1", "U열 상품명", "AA열 수량", "BD열 배송메세지",
+                        ],
+                        "→ 로젠 업로드 컬럼": [
+                            "수하인명", "우편번호", "수하인 주소",
+                            "수하인 전화번호 / 휴대폰번호", "물품명", "수량", "배송메시지",
+                        ],
+                    }))
+                else:  # HANJIN
+                    st.table(pd.DataFrame({
+                        "스마트스토어 컬럼": [
+                            "N열 수취인명", "AY열 합배송지",
+                            "AW열 수취인연락처1", "U열 상품명", "AA열 수량", "BD열 배송메세지",
+                        ],
+                        "→ 한진 업로드 컬럼": [
+                            "받는분성명", "받는분주소",
+                            "받는분전화번호 / 받는분휴대폰", "품목명", "박스수량", "배송메시지",
+                        ],
+                    }))
 
+            # ── 변환 결과 미리보기 ──
             with st.expander("📋 변환 결과 미리보기", expanded=True):
-                st.dataframe(df_cj_upload, use_container_width=True)
+                st.dataframe(df_export, use_container_width=True)
 
+            # ── 다운로드 버튼 ──
             st.markdown("<br>", unsafe_allow_html=True)
+            if courier_key == "CJ":
+                file_label = "⬇️  CJ LOIS 접수 파일 다운로드"
+                file_name = "CJ_LOIS_접수.xlsx"
+            elif courier_key == "LOGEN":
+                file_label = "⬇️  로젠택배 업로드 파일 다운로드"
+                file_name = "LOGEN_접수.xlsx"
+            else:
+                file_label = "⬇️  한진택배 업로드 파일 다운로드"
+                file_name = "HANJIN_접수.xlsx"
+
             st.download_button(
-                label="⬇️  CJ LOIS 접수 파일 다운로드",
-                data=df_to_excel_bytes(df_cj_upload, "LOIS_접수"),
-                file_name="CJ_LOIS_접수.xlsx",
+                label=file_label,
+                data=export_bytes,
+                file_name=file_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )
 
+        except FormatError as fe:
+            st.error(str(fe))
         except IndexError:
-            st.error("컬럼 구조가 예상과 다릅니다. 네이버 스마트스토어 원본 엑셀 파일인지 확인해 주세요.")
+            st.error(
+                "엑셀 컬럼 구조가 예상과 다릅니다.\n"
+                "네이버 스마트스토어에서 다운로드한 원본 주문서인지 다시 확인해 주세요."
+            )
         except Exception as e:
             st.error(f"처리 중 오류가 발생했습니다: {e}")
             with st.expander("오류 상세"):
@@ -502,6 +565,9 @@ with tab2:
 
                     df_cj = pd.read_excel(uploaded_cj_t2, dtype=str).fillna("")
 
+                    # CJ 파일 양식 유효성 검사 (필수 컬럼/데이터 존재 여부)
+                    validate_format("cj", df_cj)
+
                     # [V3.1] 지능형 컬럼 탐색으로 유효성 검사 (정확한 오류 메시지 포함)
                     cj_detected = map_cj_columns(df_cj)  # ValueError 시 즉시 중단
 
@@ -591,10 +657,12 @@ with tab2:
                     "'발주(주문)확인/발송관리 > 일괄발송 처리' 메뉴에서 업로드하세요."
                 )
 
+            except FormatError as fe:
+                st.error(str(fe))
             except ValueError as ve:
-                st.error(f"파일 형식 오류\n\n{ve}")
+                st.error(f"파일 형식 오류가 감지되었습니다.\n\n{ve}")
             except Exception as e:
-                st.error(f"처리 중 오류가 발생했습니다: {e}")
+                st.error("처리 중 알 수 없는 오류가 발생했습니다. 아래 상세 정보를 참고해 주세요.")
                 with st.expander("오류 상세"):
                     st.exception(e)
 

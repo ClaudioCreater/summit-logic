@@ -38,7 +38,42 @@ NAVER: dict[str, int] = {
 
 
 # ===========================================================
-# [V3.1] 지능형 컬럼 탐색
+# 택배사 업로드 양식 컬럼 정의
+#   - Summit Logic에서는 CJ용 합배송·정제 로직을 공통으로 사용하고,
+#     각 택배사의 업로드 템플릿 순서/컬럼명만 다르게 매핑합니다.
+#   - 컬럼명은 각 택배사 프로그램(wLOGEN / 한진 연동)에서
+#     널리 사용되는 표준 필드명을 기준으로 합니다.
+# ===========================================================
+
+# 로젠택배 (wLOGEN / iLOGEN) 대량등록용 필드 순서
+# 참고: "주문번호, 수하인명, 수하인 전화번호, 수하인 휴대폰번호, 수하인 주소, 물품명, 수량, 배송메시지"
+LOGEN_UPLOAD_COLUMNS: list[str] = [
+    "주문번호",           # 스마트스토어 상품주문번호
+    "수하인명",
+    "수하인 전화번호",
+    "수하인 휴대폰번호",
+    "수하인 주소",
+    "물품명",
+    "수량",
+    "배송메시지",
+]
+
+# 한진택배 대량등록용 필드 순서
+# (공식 문서는 일부 시스템 내부 메뉴에서만 제공되므로,
+#  일반적으로 사용되는 배송정보 연동 필드를 기준으로 구성)
+HANJIN_UPLOAD_COLUMNS: list[str] = [
+    "받는분성명",
+    "받는분전화번호",
+    "받는분휴대폰",
+    "받는분주소",
+    "품목명",
+    "박스수량",
+    "배송메시지",
+]
+
+
+# ===========================================================
+# [V3.1] 지능형 컬럼 탐색 + 양식 유효성 검사
 # ===========================================================
 
 # ── CJ LOIS 파일 컬럼 탐색 키워드 (우선순위 순, 한·영 혼용 지원) ──
@@ -72,6 +107,65 @@ def _normalize(text: str) -> str:
         _normalize("Invoice_No.") → "invoiceno."
     """
     return _re.sub(r"[\s_\-]", "", str(text)).lower()
+
+
+class FormatError(ValueError):
+    """
+    파일 양식이 기대한 규격과 다를 때 사용하는 커스텀 예외입니다.
+
+    - 잘못된 엑셀 템플릿 업로드
+    - 필수 컬럼 누락
+    - 데이터가 0건인 경우 등
+    """
+
+
+def validate_format(kind: str, df: pd.DataFrame) -> None:
+    """
+    업로드된 DataFrame이 기대한 양식에 맞는지 검사합니다.
+
+    Args:
+        kind: "smart" (스마트스토어 주문서) / "cj" (CJ 결과 파일)
+        df  : 검사 대상 DataFrame
+
+    Raises:
+        FormatError: 양식 오류가 발견된 경우 (한글 안내 메시지 포함)
+    """
+    kind = kind.lower().strip()
+
+    if kind == "smart":
+        # 최소 컬럼 개수 검사 (네이버 인덱스 기준)
+        required_max_idx = max(NAVER.values())
+        if df.shape[1] <= required_max_idx:
+            raise FormatError(
+                "스마트스토어 주문 엑셀 양식이 올바르지 않습니다.\n"
+                f"- 필요한 최소 컬럼 수: {required_max_idx + 1}개 이상\n"
+                f"- 실제 컬럼 수: {df.shape[1]}개\n\n"
+                "네이버 스마트스토어 '발주(주문)확인/발송관리' 화면에서 "
+                "'엑셀 다운로드'한 원본 파일인지 확인해 주세요."
+            )
+        if df.empty:
+            raise FormatError(
+                "스마트스토어 주문 데이터가 0건입니다.\n"
+                "엑셀 파일에 실제 주문 행이 포함되어 있는지 확인해 주세요."
+            )
+        return
+
+    if kind == "cj":
+        if df.empty:
+            raise FormatError(
+                "택배사 결과 파일에 데이터가 없습니다.\n"
+                "운송장 발급이 정상적으로 완료된 엑셀 파일인지 확인해 주세요."
+            )
+        # CJ 파일은 map_cj_columns() 가 실제 컬럼 존재 여부를 검증해 줌
+        try:
+            map_cj_columns(df)
+        except ValueError as e:
+            # ValueError 메시지를 그대로 래핑하여 사용자에게 전달
+            raise FormatError(str(e)) from e
+        return
+
+    # 기타 타입은 현재 사용하지 않음
+    raise FormatError(f"지원하지 않는 양식 종류입니다: {kind!r}")
 
 
 def find_column(df: pd.DataFrame, keywords: list, field_name: str) -> str:
@@ -334,6 +428,81 @@ def build_cj_upload_df(df_smart: pd.DataFrame) -> tuple[pd.DataFrame, int]:
 
 
 # ===========================================================
+# 다중 택배사 업로드 양식 변환 (Tab 1)
+#   - CJ 대한통운 / 로젠택배 / 한진택배 공통 합배송 로직 사용
+#   - 택배사별 업로드 템플릿 컬럼명·순서를 맞춰 DataFrame 재구성
+# ===========================================================
+
+def build_courier_upload_df(
+    df_smart: pd.DataFrame,
+    courier_name: str,
+) -> tuple[pd.DataFrame, int]:
+    """
+    스마트스토어 DataFrame → 선택한 택배사 업로드 양식으로 변환합니다.
+
+    내부적으로는 항상 build_cj_upload_df() 를 먼저 호출하여
+    합배송·데이터 정제를 공통으로 수행한 뒤,
+    택배사별 템플릿에 맞게 컬럼명과 순서를 재배치합니다.
+
+    Args:
+        df_smart    : 네이버 스마트스토어 주문 DataFrame
+        courier_name: 택배사 이름 (대소문자 무시, 한글/영문 일부 별칭 허용)
+                      예) "CJ", "CJ대한통운", "logen", "로젠", "HANJIN", "한진"
+
+    Returns:
+        tuple:
+            - 변환된 업로드용 DataFrame
+            - 원본 주문 건수 (합배송 전 개수)
+
+    Raises:
+        ValueError: 지원하지 않는 택배사 이름인 경우
+    """
+    base_df, original_count = build_cj_upload_df(df_smart)
+
+    key = courier_name.strip().upper()
+
+    # ── 1) CJ 대한통운 (기존 LOIS 양식 그대로 사용) ──
+    if key in {"CJ", "CJ대한통운", "CJ 대한통운", "CJ-LOIS", "CJ_LOIS"}:
+        # 기존 CJ 업로드 양식을 그대로 사용 (컬럼 이름 유지)
+        return base_df.copy(), original_count
+
+    # ── 2) 로젠택배 ──
+    if key in {"LOGEN", "LOGEN택배", "로젠", "로젠택배"}:
+        df_logen = pd.DataFrame({
+            "주문번호":           base_df["고객주문번호"],
+            "수하인명":           base_df["수취인명"],
+            "수하인 전화번호":     base_df["연락처"],
+            "수하인 휴대폰번호":   base_df["연락처"],
+            "수하인 주소":         base_df["주소"],
+            "물품명":             base_df["상품명"],
+            "수량":               base_df["수량"],
+            "배송메시지":         base_df["배송메시지"],
+        })
+        # 명시적으로 정의한 템플릿 순서 적용
+        df_logen = df_logen[[c for c in LOGEN_UPLOAD_COLUMNS if c in df_logen.columns]]
+        return df_logen, original_count
+
+    # ── 3) 한진택배 ──
+    if key in {"HANJIN", "HANJIN택배", "한진", "한진택배"}:
+        df_hanjin = pd.DataFrame({
+            "받는분성명":     base_df["수취인명"],
+            "받는분전화번호": base_df["연락처"],
+            "받는분휴대폰":   base_df["연락처"],
+            "받는분주소":     base_df["주소"],
+            "품목명":         base_df["상품명"],
+            "박스수량":       base_df["수량"],
+            "배송메시지":     base_df["배송메시지"],
+        })
+        df_hanjin = df_hanjin[[c for c in HANJIN_UPLOAD_COLUMNS if c in df_hanjin.columns]]
+        return df_hanjin, original_count
+
+    raise ValueError(
+        f"지원하지 않는 택배사입니다: '{courier_name}'. "
+        "사용 가능한 값: CJ / 로젠 / 한진"
+    )
+
+
+# ===========================================================
 # 송장 매칭 (Tab 2)
 # ===========================================================
 
@@ -451,3 +620,43 @@ def df_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Sheet1") -> bytes:
         df.to_excel(writer, index=False, sheet_name=sheet_name)
     buf.seek(0)
     return buf.getvalue()
+
+
+def export_to_excel(
+    df_smart: pd.DataFrame,
+    courier_name: str,
+) -> tuple[bytes, pd.DataFrame, int, int]:
+    """
+    스마트스토어 주문 DataFrame을 선택한 택배사 업로드용 엑셀 바이트로 내보냅니다.
+
+    내부 흐름:
+        1) build_courier_upload_df() 로 택배사별 템플릿 DataFrame 생성
+        2) df_to_excel_bytes() 로 엑셀 바이트 변환
+
+    Args:
+        df_smart    : 네이버 스마트스토어 주문 DataFrame
+        courier_name: "CJ", "로젠", "한진" 등 택배사 이름
+
+    Returns:
+        tuple:
+            - bytes      : 엑셀 파일 바이트 스트림
+            - df_export  : 택배사 업로드용 DataFrame
+            - original   : 원본 주문 건수
+            - total      : 업로드 행 수 (합배송 후 건수)
+    """
+    df_export, original = build_courier_upload_df(df_smart, courier_name)
+    total = len(df_export)
+
+    key = courier_name.strip().upper()
+    if key in {"CJ", "CJ대한통운", "CJ 대한통운", "CJ-LOIS", "CJ_LOIS"}:
+        sheet_name = "CJ_LOIS_접수"
+    elif key in {"LOGEN", "LOGEN택배", "로젠", "로젠택배"}:
+        sheet_name = "LOGEN_접수"
+    elif key in {"HANJIN", "HANJIN택배", "한진", "한진택배"}:
+        sheet_name = "HANJIN_접수"
+    else:
+        sheet_name = "Shipment"
+
+    bytes_data = df_to_excel_bytes(df_export, sheet_name=sheet_name)
+    return bytes_data, df_export, original, total
+
