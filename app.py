@@ -171,7 +171,7 @@ with st.sidebar:
         )
 
     st.markdown("---")
-    st.caption("Summit Logic V3.1")
+    st.caption("Summit Logic V3.2")
 
 
 # ── 앱 헤더 ──
@@ -179,8 +179,9 @@ st.markdown(
     """
     <div class="header-area">
         <h1>📦 Summit Logic</h1>
-        <p>스마트스토어 주문서와 대한통운 LOIS 파일을 업로드하면<br>
-        자동으로 접수 파일 생성 및 송장번호 매칭을 처리해 드립니다.</p>
+        <p>스마트스토어 주문서를 업로드하면<br>
+        CJ 대한통운·로젠·한진택배 접수 파일 생성과<br>
+        CJ 대한통운 결과 기준 송장번호 매칭을 자동으로 처리해 드립니다.</p>
     </div>
     <hr class="divider">
     """,
@@ -713,7 +714,7 @@ st.markdown(
 st.markdown(
     """
     <div style="text-align:center; color:#bdc1c6; font-size:0.78rem;">
-        Summit Logic V3.1 &nbsp;|&nbsp; 스마트스토어 × 대한통운 LOIS 자동화
+        Summit Logic V3.2 &nbsp;|&nbsp; 스마트스토어 × 택배 3사(대한통운·로젠·한진) 자동화
         &nbsp;&nbsp;·&nbsp;&nbsp;
         업로드된 파일은 서버에 저장되지 않으며 처리 즉시 메모리에서 삭제됩니다.
     </div>
