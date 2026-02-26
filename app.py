@@ -52,10 +52,53 @@ st.markdown(
         .header-area { text-align: center; padding: 48px 0 12px 0; }
         .header-area h1 {
             font-size: 2rem; font-weight: 700;
-            color: #1a73e8; margin-bottom: 4px;
+            color: #16355b; margin-bottom: 8px;
         }
         .header-area p {
             font-size: 0.95rem; color: #5f6368; line-height: 1.6;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #0f172a;
+            color: #e5e7eb;
+            font-size: 0.74rem;
+            margin-bottom: 12px;
+        }
+        .hero-badge span {
+            font-size: 0.8rem;
+        }
+
+        .process-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin: 10px 0 28px;
+            justify-content: center;
+        }
+        .process-step {
+            flex: 1;
+            min-width: 160px;
+            max-width: 220px;
+            background: #0f172a;
+            color: #e5e7eb;
+            border-radius: 12px;
+            padding: 12px 14px;
+            text-align: left;
+        }
+        .process-step h4 {
+            margin: 0 0 4px;
+            font-size: 0.9rem;
+        }
+        .process-step p {
+            margin: 0;
+            font-size: 0.78rem;
+            line-height: 1.5;
+            color: #cbd5f5;
         }
 
         .divider { border: none; border-top: 1px solid #e8eaed; margin: 20px 0; }
@@ -92,8 +135,8 @@ st.markdown(
             font-size: 0.85rem; color: #c5221f;
         }
         .info-banner {
-            background: #e8f0fe; border-radius: 8px;
-            padding: 14px 18px; color: #1a56a4;
+            background: #0f172a; border-radius: 8px;
+            padding: 14px 18px; color: #e5e7eb;
             font-size: 0.88rem; text-align: center; margin-top: 8px;
         }
         .bundle-info {
@@ -178,12 +221,42 @@ with st.sidebar:
 st.markdown(
     """
     <div class="header-area">
-        <h1>📦 Summit Logic</h1>
-        <p>스마트스토어 주문서를 업로드하면<br>
-        CJ 대한통운·로젠·한진택배 접수 파일 생성과<br>
-        선택한 택배사의 운송장 결과 기준 송장번호 매칭을 자동으로 처리해 드립니다.</p>
+        <div class="hero-badge">
+            <span>NEW</span> · 로젠/한진 양식까지 한 번에
+        </div>
+        <h1>30분 걸리던 송장 출력, 1초 만에 끝내고 퇴근하세요.</h1>
+        <p>사장님의 시급은 1만 원이 아닙니다. 엑셀 노가다는 써밋로직 비서에게 맡기고,<br>
+        사장님은 상품 개발과 고객 관리, 진짜 본업에만 집중하세요.</p>
     </div>
     <hr class="divider">
+    """,
+    unsafe_allow_html=True,
+)
+
+# ── 서비스 프로세스 (데이터 수집 → AI 정밀 세척 → 택배사별 맞춤 변환 → 배송비 절감 리포트) ──
+st.markdown(
+    """
+    <div style="text-align:center; margin-top:8px; margin-bottom:4px;">
+        <h3 style="font-size:1.05rem; color:#16355b; margin-bottom:6px;">서비스 프로세스</h3>
+        <div class="process-row">
+            <div class="process-step">
+                <h4>1. 데이터 수집</h4>
+                <p>스마트스토어 주문서와 택배사 운송장 결과 파일을 그대로 업로드합니다.</p>
+            </div>
+            <div class="process-step">
+                <h4>2. AI 정밀 세척</h4>
+                <p>이모지·제어문자·이상 전화번호를 자동으로 정리해 업로드 오류를 사전에 차단합니다.</p>
+            </div>
+            <div class="process-step">
+                <h4>3. 택배사별 맞춤 변환</h4>
+                <p>CJ·로젠·한진 각사 양식에 맞춰 컬럼과 길이를 자동 재구성합니다.</p>
+            </div>
+            <div class="process-step">
+                <h4>4. 배송비 절감 리포트</h4>
+                <p>합배송으로 묶인 건수를 한눈에 보여주어 불필요한 배송비를 줄입니다.</p>
+            </div>
+        </div>
+    </div>
     """,
     unsafe_allow_html=True,
 )
@@ -271,42 +344,43 @@ with tab1:
 
     if uploaded_t1:
         try:
-            unlocked_t1 = unlock_excel(uploaded_t1, pw_t1)
+            with st.spinner("데이터 세척 및 합배송 최적화 중입니다... (이모지 제거 → 전화번호 정리 → 합배송 계산)"):
+                unlocked_t1 = unlock_excel(uploaded_t1, pw_t1)
 
-            # ── [V3.1] 헤더 위치 탐색 (진단용) ──
-            detected_header_row = find_header_row(unlocked_t1)
-            df_smart = read_naver_excel(unlocked_t1)
+                # ── [V3.1] 헤더 위치 탐색 (진단용) ──
+                detected_header_row = find_header_row(unlocked_t1)
+                df_smart = read_naver_excel(unlocked_t1)
 
-            # 스마트스토어 양식 유효성 검사 (행/컬럼 개수 등)
-            validate_format("smart", df_smart)
+                # 스마트스토어 양식 유효성 검사 (행/컬럼 개수 등)
+                validate_format("smart", df_smart)
 
-            # ── [V3.1] 진단 모드: 인식된 헤더 정보 표시 ──
-            diag = diagnose_smart_file(df_smart, detected_header_row)
-            with st.expander("🔍 파일 인식 진단 결과 (클릭하여 확인)", expanded=False):
-                st.markdown(
-                    f"**헤더 행**: Row {diag['header_row'] + 1} &nbsp;|&nbsp; "
-                    f"**전체 컬럼**: {diag['total_cols']}개 &nbsp;|&nbsp; "
-                    f"**주문 데이터**: {diag['total_rows']}행",
+                # ── [V3.1] 진단 모드: 인식된 헤더 정보 표시 ──
+                diag = diagnose_smart_file(df_smart, detected_header_row)
+                with st.expander("🔍 파일 인식 진단 결과 (클릭하여 확인)", expanded=False):
+                    st.markdown(
+                        f"**헤더 행**: Row {diag['header_row'] + 1} &nbsp;|&nbsp; "
+                        f"**전체 컬럼**: {diag['total_cols']}개 &nbsp;|&nbsp; "
+                        f"**주문 데이터**: {diag['total_rows']}행",
+                    )
+                    rows_diag = []
+                    for logical, (idx, actual, ok) in diag["key_cols"].items():
+                        rows_diag.append({
+                            "필드": logical,
+                            "열 번호": f"{idx}번열",
+                            "인식된 컬럼명": actual,
+                            "상태": "✅ 정상" if ok else "⚠️ 확인 필요",
+                        })
+                    st.dataframe(
+                        pd.DataFrame(rows_diag),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                # 선택한 택배사 업로드 양식으로 변환
+                export_bytes, df_export, original_count, total = export_to_excel(
+                    df_smart, courier_key
                 )
-                rows_diag = []
-                for logical, (idx, actual, ok) in diag["key_cols"].items():
-                    rows_diag.append({
-                        "필드": logical,
-                        "열 번호": f"{idx}번열",
-                        "인식된 컬럼명": actual,
-                        "상태": "✅ 정상" if ok else "⚠️ 확인 필요",
-                    })
-                st.dataframe(
-                    pd.DataFrame(rows_diag),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-            # 선택한 택배사 업로드 양식으로 변환
-            export_bytes, df_export, original_count, total = export_to_excel(
-                df_smart, courier_key
-            )
-            bundled = original_count - total
+                bundled = original_count - total
 
             # ── 결과 통계 카드 ──
             bundle_html = (
@@ -562,7 +636,7 @@ with tab2:
                 else:
                     st.caption("파일을 업로드하면 진단 결과가 표시됩니다.")
 
-    run_btn = st.button("🔍 송장번호 자동 매칭 실행", use_container_width=True, key="run_btn")
+    run_btn = st.button("🤖 송장 자동화 시작", use_container_width=True, key="run_btn")
     st.markdown("<hr class='divider'>", unsafe_allow_html=True)
 
     if run_btn:
@@ -576,7 +650,7 @@ with tab2:
             )
         else:
             try:
-                with st.spinner("매칭 처리 중... 잠시만 기다려주세요."):
+                with st.spinner("송장 자동화 중입니다... (데이터 세척 → 택배사 규격 검증 → 매칭)"):
                     unlocked_smart_t2 = unlock_excel(uploaded_smart_t2, pw_t2)
 
                     df_cj = pd.read_excel(uploaded_cj_t2, dtype=str).fillna("")
@@ -700,6 +774,20 @@ with tab2:
 # 하단 푸터 + 개인정보 처리 방침 배너
 # ===========================================================
 st.markdown("<br><br>", unsafe_allow_html=True)
+
+# 창업자 스토리 (Underdog Narrative)
+with st.expander("왜 2004년생 셀러가 이 서비스를 만들었나요?"):
+    st.markdown(
+        """
+        2004년생 수제 쿠키 셀러가 정강이 수술 후 병실에서 휠체어를 타고 직접 개발했습니다.<br>
+        새벽까지 송장 엑셀을 붙잡고 있다가, '이 시간을 상품 개발과 고객 상담에 쓸 수 있다면 얼마나 좋을까'를
+        매일같이 고민했습니다.<br><br>
+        그래서 써밋로직은 화려한 그래프보다, **실제 셀러의 고통을 줄이는 본질적인 해결**에 집중합니다.<br>
+        엑셀 오류·합배송 계산 같은 반복 작업은 이 비서에게 맡기고,
+        사장님은 사장님만이 할 수 있는 일에 시간을 쓰셔야 합니다.
+        """,
+        unsafe_allow_html=True,
+    )
 
 # 개인정보 처리 방침 배너 (푸터 상단)
 st.markdown(
