@@ -72,6 +72,13 @@ st.markdown(
         .hero-badge span {
             font-size: 0.8rem;
         }
+        .hero-badge .brand {
+            font-size: 0.82rem;
+            font-weight: 600;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            margin-right: 4px;
+        }
 
         .process-row {
             display: flex;
@@ -222,7 +229,8 @@ st.markdown(
     """
     <div class="header-area">
         <div class="hero-badge">
-            <span>NEW</span> · 로젠/한진 양식까지 한 번에
+            <span class="brand">📦 Summit Logic</span>
+            <span>NEW · 로젠/한진 양식까지 한 번에</span>
         </div>
         <h1>30분 걸리던 송장 출력, 1초 만에 끝내고 퇴근하세요.</h1>
         <p>사장님의 시급은 1만 원이 아닙니다. 엑셀 노가다는 써밋로직 비서에게 맡기고,<br>
