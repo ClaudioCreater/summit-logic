@@ -509,6 +509,7 @@ def build_courier_upload_df(
 def match_and_fill_waybill(
     smart_file_obj,
     cj_df: pd.DataFrame,
+    courier_name: str = "CJ대한통운",
 ) -> tuple[bytes, int, int, list[str], dict[str, str]]:
     """
     [템플릿 유지형 + 합배송 대응] 스마트스토어 원본에 송장번호를 기입합니다.
@@ -517,7 +518,7 @@ def match_and_fill_waybill(
     1. CJ 파일에서 {고객주문번호: 운송장번호} 룩업 사전 생성
     2. 스마트스토어 파일을 read_naver_excel() 로 읽어 합배송 그룹 구성
        (Tab 1과 완전 동일한 정제 기준 → 그룹이 일치함을 보장)
-    3. 그룹 대표 주문번호 → CJ 조회 → 그룹 내 모든 행에 동일 송장번호 기입
+    3. 그룹 대표 주문번호 → 택배사 결과 조회 → 그룹 내 모든 행에 동일 송장번호 기입
     4. openpyxl 로 원본 파일 로드 → H열(택배사)·I열(송장번호) 셀만 수정
        (1·2행 안내 문구, 서식, 수식 등 모든 원본 내용 보존)
 
@@ -585,7 +586,8 @@ def match_and_fill_waybill(
             continue
         waybill = order_to_waybill.get(order_no, "")
         if waybill:
-            row_cells[NAVER["택배사"]].value   = "CJ대한통운"
+            # 선택된 택배사 이름을 그대로 기록 (예: CJ대한통운, 로젠택배, 한진택배)
+            row_cells[NAVER["택배사"]].value   = courier_name
             row_cells[NAVER["송장번호"]].value = waybill
             matched += 1
         else:

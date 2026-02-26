@@ -437,12 +437,12 @@ with tab1:
 # ===========================================================
 with tab2:
 
-    st.markdown("#### 대한통운 → 스마트스토어 송장번호 자동 매칭")
+    st.markdown("#### 택배사 → 스마트스토어 송장번호 자동 매칭")
     st.markdown(
         """
         <div class="info-banner">
-            두 파일을 올리면 <b>상품주문번호 ↔ 고객주문번호</b> 기준으로 자동 매칭하여<br>
-            H열(택배사)과 I열(송장번호)을 채운 파일을 반환합니다.<br>
+            선택한 택배사의 운송장 결과 엑셀과 스마트스토어 주문서를 올리면<br>
+            <b>상품주문번호 ↔ 주문번호</b> 기준으로 자동 매칭하여 H열(택배사)과 I열(송장번호)을 채웁니다.<br>
             <small>합배송 묶음 주문은 동일한 송장번호가 모든 관련 행에 자동 입력됩니다.</small>
         </div>
         """,
@@ -479,18 +479,33 @@ with tab2:
         st.markdown(
             """
             <div class="upload-card">
-                <h3>② 대한통운 LOIS 결과 파일</h3>
-                <p>LOIS 시스템에서 운송장 발급 후 다운로드한 결과 파일을 올려주세요.</p>
+                <h3>② 택배사 결과 파일</h3>
+                <p>CJ 대한통운·로젠·한진택배 시스템에서 운송장 발급 후 다운로드한 결과 파일을 올려주세요.</p>
             </div>
             """,
             unsafe_allow_html=True,
         )
         uploaded_cj_t2 = st.file_uploader(
-            "대한통운 LOIS 결과 (xlsx)",
+            "택배사 운송장 결과 (xlsx)",
             type=["xlsx"],
             key="tab2_cj",
             label_visibility="collapsed",
         )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── 택배사 선택 ──
+    courier_label_t2 = st.selectbox(
+        "택배사 선택",
+        options=["CJ 대한통운", "로젠택배", "한진택배"],
+        index=0,
+    )
+    if "CJ" in courier_label_t2:
+        courier_key_t2 = "CJ대한통운"
+    elif "로젠" in courier_label_t2:
+        courier_key_t2 = "로젠택배"
+    else:
+        courier_key_t2 = "한진택배"
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -575,6 +590,7 @@ with tab2:
                     result_bytes, matched, unmatched, unmatched_list, order_to_waybill = match_and_fill_waybill(
                         smart_file_obj=unlocked_smart_t2,
                         cj_df=df_cj,
+                        courier_name=courier_key_t2,
                     )
 
                 total = matched + unmatched
@@ -639,7 +655,7 @@ with tab2:
                 for i, row in preview.iterrows():
                     key  = str(row["상품주문번호"]).strip()
                     wb_n = order_to_waybill.get(key, "")
-                    preview.at[i, "택배사"]  = "CJ대한통운" if wb_n else "미발급"
+                    preview.at[i, "택배사"]  = courier_key_t2 if wb_n else "미발급"
                     preview.at[i, "송장번호"] = wb_n if wb_n else "미발급"
 
                 with st.expander("📋 결과 미리보기", expanded=False):
